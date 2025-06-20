@@ -9,7 +9,10 @@ import logging
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from common.protocol import Protocol, MessageType
-from client_handler import ClientHandler
+from common.colors import print_success, print_info, print_warning, colored
+from common.history import HistoryManager
+from common.stats import server_stats
+from .client_handler import ClientHandler
 
 class ChatServer:
     def __init__(self, host='localhost', port=12345, log_file='server.log'):
@@ -28,13 +31,20 @@ class ChatServer:
         # Konfiguracja logowania
         self.setup_logging(log_file)
         
-        # Statystyki serwera
+        # Nowe moduły
+        self.history = HistoryManager()
+        self.use_colors = True
+        
+        # Statystyki serwera (stare + nowe)
         self.stats = {
             'start_time': None,
             'total_connections': 0,
             'total_messages': 0,
             'peak_users': 0
         }
+        
+        # Inicjalizuj nowy system statystyk
+        server_stats.session_stats['start_time'] = datetime.datetime.now()
     
     def setup_logging(self, log_file):
         """Konfiguruje system logowania"""
@@ -56,13 +66,24 @@ class ChatServer:
         self.logger = logging.getLogger(__name__)
     
     def log(self, message, level='info'):
-        """Loguje wiadomość"""
+        """Loguje wiadomość z kolorami"""
+        # Kolorowe logowanie w konsoli
         if level == 'info':
             self.logger.info(message)
+            if self.use_colors:
+                print_info(message)
         elif level == 'warning':
             self.logger.warning(message)
+            if self.use_colors:
+                print_warning(message)
         elif level == 'error':
             self.logger.error(message)
+            if self.use_colors:
+                print(colored.error(f"❌ {message}"))
+        elif level == 'success':
+            self.logger.info(message)
+            if self.use_colors:
+                print_success(message)
         elif level == 'debug':
             self.logger.debug(message)
     
@@ -74,9 +95,19 @@ class ChatServer:
             self.running = True
             self.stats['start_time'] = datetime.datetime.now()
             
-            self.log(f"🚀 Serwer uruchomiony na {self.host}:{self.port}")
-            self.log(f"Maksymalna liczba klientów: {self.max_clients}")
-            self.log("Oczekiwanie na połączenia...")
+            # Kolorowe powitanie
+            if self.use_colors:
+                print(colored.cyan("\n" + "="*60))
+                print(colored.cyan("🗨️  KOMUNIKATOR IP - SERWER URUCHOMIONY"))
+                print(colored.cyan("="*60))
+                print(colored.green(f"🚀 Adres: {self.host}:{self.port}"))
+                print(colored.yellow(f"👥 Maksymalnie klientów: {self.max_clients}"))
+                print(colored.blue("📂 Logi zapisywane w folderze: logs/"))
+                print(colored.magenta("🎨 Kolory: włączone"))
+                print(colored.cyan("="*60 + "\n"))
+            
+            self.log(f"Serwer uruchomiony na {self.host}:{self.port}", 'success')
+            self.log("Oczekiwanie na połączenia...", 'info')
             
             # Uruchom wątek statystyk
             stats_thread = threading.Thread(target=self.stats_worker)
@@ -90,12 +121,13 @@ class ChatServer:
                     # Sprawdź limit klientów
                     with self.clients_lock:
                         if len(self.clients) >= self.max_clients:
-                            self.log(f"Odrzucono połączenie z {address} - przekroczono limit klientów", 'warning')
+                            self.log(f"Odrzucono połączenie z {address} - przekroczono limit", 'warning')
                             client_socket.close()
                             continue
                     
-                    self.log(f"📞 Nowe połączenie z {address}")
+                    self.log(f"📞 Nowe połączenie z {address}", 'info')
                     self.stats['total_connections'] += 1
+                    server_stats.record_connection()
                     
                     # Tworzymy handler dla klienta
                     client_handler = ClientHandler(client_socket, address, self)
@@ -105,14 +137,14 @@ class ChatServer:
                     
                 except socket.error as e:
                     if self.running:
-                        self.log(f"❌ Błąd podczas akceptowania połączenia: {e}", 'error')
+                        self.log(f"Błąd podczas akceptowania połączenia: {e}", 'error')
                     break
                 except Exception as e:
-                    self.log(f"❌ Nieoczekiwany błąd: {e}", 'error')
+                    self.log(f"Nieoczekiwany błąd: {e}", 'error')
                     break
                     
         except Exception as e:
-            self.log(f"❌ Błąd serwera: {e}", 'error')
+            self.log(f"Błąd serwera: {e}", 'error')
         finally:
             self.shutdown()
     
@@ -130,12 +162,16 @@ class ChatServer:
         with self.clients_lock:
             current_users = len(self.clients)
         
-        self.log(f"📊 Statystyki serwera:")
-        self.log(f"   Aktywni użytkownicy: {current_users}")
-        self.log(f"   Szczyt użytkowników: {self.stats['peak_users']}")
-        self.log(f"   Całkowite połączenia: {self.stats['total_connections']}")
-        self.log(f"   Całkowite wiadomości: {self.stats['total_messages']}")
-        self.log(f"   Czas działania: {uptime}")
+        # Używaj nowego systemu statystyk
+        current_stats = server_stats.get_current_stats()
+        
+        self.log("📊 Statystyki serwera:", 'info')
+        self.log(f"   ⏰ Czas działania: {uptime}", 'info')
+        self.log(f"   👥 Aktywni użytkownicy: {current_users}", 'info')
+        self.log(f"   🏆 Szczyt użytkowników: {current_stats['peak_users']}", 'info')
+        self.log(f"   🔗 Całkowite połączenia: {current_stats['connections']}", 'info')
+        self.log(f"   💬 Całkowite wiadomości: {current_stats['messages_sent']}", 'info')
+        self.log(f"   📈 Wiadomości/godz: {current_stats['messages_per_hour']}", 'info')
     
     def add_client(self, nick: str, client_handler):
         """Dodaje klienta do listy aktywnych"""
@@ -148,6 +184,13 @@ class ChatServer:
             current_count = len(self.clients)
             if current_count > self.stats['peak_users']:
                 self.stats['peak_users'] = current_count
+            
+            # Aktualizuj nowy system statystyk
+            server_stats.update_peak_users(current_count)
+            server_stats.record_connection(nick)
+        
+        # Dodaj do historii
+        self.history.add_message("system", f"{nick} dołączył do czatu", "system")
         
         # Powiadom wszystkich o nowym użytkowniku
         join_message = Protocol.create_system_message(f"{nick} dołączył do czatu")
@@ -158,7 +201,7 @@ class ChatServer:
         list_message = Protocol.create_user_list_message(user_list)
         client_handler.send_message(list_message)
         
-        self.log(f"✅ Użytkownik {nick} dołączył. Aktywni użytkownicy: {len(self.clients)}")
+        self.log(f"✅ {nick} dołączył. Aktywni: {len(self.clients)}", 'success')
         return True
     
     def remove_client(self, nick: str):
@@ -166,16 +209,30 @@ class ChatServer:
         with self.clients_lock:
             if nick in self.clients:
                 del self.clients[nick]
-                
+        
+        # Dodaj do historii
+        self.history.add_message("system", f"{nick} opuścił czat", "system")
+        
         # Powiadom pozostałych o odejściu
         leave_message = Protocol.create_system_message(f"{nick} opuścił czat")
         self.broadcast_message(leave_message)
         
-        self.log(f"👋 Użytkownik {nick} opuścił czat. Aktywni użytkownicy: {len(self.clients)}")
+        self.log(f"👋 {nick} opuścił czat. Aktywni: {len(self.clients)}", 'info')
     
-    def broadcast_message(self, message: str, exclude_user: str = None):
+    def broadcast_message(self, message: str, exclude_user: str = None, save_to_history: bool = True):
         """Wysyła wiadomość do wszystkich klientów"""
         self.stats['total_messages'] += 1
+        server_stats.record_message()
+        
+        # Zapisz do historii (opcjonalnie)
+        if save_to_history and exclude_user:
+            # To jest zwykła wiadomość użytkownika
+            try:
+                parsed = Protocol.parse_message(message)
+                if parsed['type'] == MessageType.MESSAGE:
+                    self.history.add_message(parsed['user'], parsed['content'], "message")
+            except:
+                pass
         
         with self.clients_lock:
             disconnected_clients = []
@@ -196,13 +253,13 @@ class ChatServer:
                 del self.clients[nick]
         
         if disconnected_clients:
-            self.log(f"Broadcast do {successful_sends} klientów, {len(disconnected_clients)} rozłączonych")
+            self.log(f"Broadcast: {successful_sends} OK, {len(disconnected_clients)} rozłączonych", 'warning')
     
     def broadcast_system_message(self, content: str):
         """Wysyła wiadomość systemową do wszystkich"""
         system_msg = Protocol.create_system_message(content)
-        self.broadcast_message(system_msg)
-        self.log(f"Wiadomość systemowa: {content}")
+        self.broadcast_message(system_msg, save_to_history=False)
+        self.log(f"📢 System: {content}", 'info')
     
     def get_user_list(self):
         """Zwraca listę aktywnych użytkowników"""
@@ -222,18 +279,65 @@ class ChatServer:
                 kick_msg = Protocol.create_system_message(f"Zostałeś wyrzucony: {reason}")
                 client_handler.send_message(kick_msg)
                 client_handler.disconnect()
-                self.log(f"Użytkownik {nick} został wyrzucony: {reason}")
+                self.log(f"👮 {nick} został wyrzucony: {reason}", 'warning')
                 return True
         return False
     
+    def handle_admin_command(self, command: str) -> str:
+        """Obsługuje komendy administratora"""
+        cmd_parts = command.strip().lower().split()
+        
+        if not cmd_parts:
+            return "Brak komendy"
+        
+        base_cmd = cmd_parts[0]
+        
+        if base_cmd == "/stats":
+            return server_stats.get_formatted_stats()
+        
+        elif base_cmd == "/history":
+            if len(cmd_parts) > 1 and cmd_parts[1] == "export":
+                path = self.history.export_to_txt()
+                return f"Historia wyeksportowana do: {path}" if path else "Błąd eksportu"
+            else:
+                recent = self.history.get_recent_messages(10)
+                result = "📝 Ostatnie 10 wiadomości:\n"
+                for msg in recent:
+                    result += f"[{msg['timestamp'][:19]}] {msg['user']}: {msg['content']}\n"
+                return result
+        
+        elif base_cmd == "/kick" and len(cmd_parts) > 1:
+            nick = cmd_parts[1]
+            reason = " ".join(cmd_parts[2:]) if len(cmd_parts) > 2 else "Komenda administratora"
+            success = self.kick_user(nick, reason)
+            return f"Użytkownik {nick} {'wyrzucony' if success else 'nie znaleziony'}"
+        
+        elif base_cmd == "/broadcast" and len(cmd_parts) > 1:
+            message = " ".join(cmd_parts[1:])
+            self.broadcast_system_message(f"📢 OGŁOSZENIE: {message}")
+            return f"Wysłano ogłoszenie: {message}"
+        
+        elif base_cmd == "/save":
+            # Zapisz statystyki i historię
+            stats_saved = server_stats.save_session_stats()
+            history_saved = self.history.save_history()
+            return f"Zapisano: statystyki={'✅' if stats_saved else '❌'}, historia={'✅' if history_saved else '❌'}"
+        
+        else:
+            return f"Nieznana komenda administratora: {command}"
+    
     def shutdown(self):
         """Wyłącza serwer"""
-        self.log("🛑 Rozpoczynam wyłączanie serwera...")
+        self.log("🛑 Rozpoczynam wyłączanie serwera...", 'warning')
         self.running = False
         
+        # Zapisz statystyki końcowe
+        server_stats.save_session_stats()
+        self.history.save_history()
+        
         # Powiadom wszystkich klientów o wyłączeniu
-        shutdown_msg = Protocol.create_system_message("Serwer zostanie wyłączony za 5 sekund...")
-        self.broadcast_message(shutdown_msg)
+        shutdown_msg = Protocol.create_system_message("🛑 Serwer zostanie wyłączony za 3 sekundy...")
+        self.broadcast_message(shutdown_msg, save_to_history=False)
         
         import time
         time.sleep(1)  # Daj czas na dostarczenie wiadomości
@@ -257,7 +361,21 @@ class ChatServer:
         
         # Wyświetl końcowe statystyki
         self.print_stats()
-        self.log("🛑 Serwer wyłączony")
+        
+        # Eksportuj końcowe raporty
+        stats_path = server_stats.export_stats()
+        history_path = self.history.export_to_txt()
+        
+        if self.use_colors:
+            print(colored.cyan("\n" + "="*60))
+            print(colored.cyan("📊 RAPORTY KOŃCOWE WYGENEROWANE:"))
+            if stats_path:
+                print(colored.green(f"   📈 Statystyki: {stats_path}"))
+            if history_path:
+                print(colored.blue(f"   📝 Historia: {history_path}"))
+            print(colored.cyan("="*60))
+        
+        self.log("🛑 Serwer wyłączony", 'success')
 
 def main():
     # Pobierz parametry z linii komend
@@ -267,11 +385,13 @@ def main():
     parser.add_argument('--port', type=int, default=12345, help='Port serwera (domyślnie: 12345)')
     parser.add_argument('--max-clients', type=int, default=50, help='Max klientów (domyślnie: 50)')
     parser.add_argument('--log-file', default='server.log', help='Plik logów (domyślnie: server.log)')
+    parser.add_argument('--no-colors', action='store_true', help='Wyłącz kolory w konsoli')
     
     args = parser.parse_args()
     
     server = ChatServer(args.host, args.port, args.log_file)
     server.max_clients = args.max_clients
+    server.use_colors = not args.no_colors
     
     try:
         server.start()

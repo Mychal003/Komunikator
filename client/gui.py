@@ -244,11 +244,9 @@ class ChatGUI:
             self.receiving_thread.daemon = True
             self.receiving_thread.start()
             
-            # Wyślij wiadomość JOIN
-            join_message = Protocol.create_message(MessageType.JOIN, nick)
-            self.socket.send(join_message.encode('utf-8'))
-            
             self.show_message(f"Połączono z {host}:{port} jako {nick}", "system")
+            
+            # Nick zostanie wysłany automatycznie gdy serwer o niego poprosi
             
         except socket.timeout:
             self.show_message("BŁĄD: Przekroczono czas oczekiwania na połączenie", "error")
@@ -321,6 +319,12 @@ class ChatGUI:
         elif msg_type == MessageType.SYSTEM:
             if content.strip():  # Nie pokazuj pustych wiadomości systemowych (ping)
                 self.show_message(f"SYSTEM: {content}", "system")
+                
+                # Automatyczne logowanie gdy serwer prosi o nick
+                if "Podaj swój nick" in content and self.nick and not hasattr(self, '_nick_sent'):
+                    join_message = Protocol.create_message(MessageType.JOIN, self.nick)
+                    self.socket.send(join_message.encode('utf-8'))
+                    self._nick_sent = True
             
         elif msg_type == MessageType.USER_LIST:
             try:
