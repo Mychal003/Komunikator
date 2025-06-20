@@ -20,13 +20,13 @@ def print_banner():
     """Wyświetla banner aplikacji"""
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
-║                    🗨️  KOMUNIKATOR IP                       ║
+║                    🗨️  KOMUNIKATOR IP                        ║
 ║                     Michał Pawlik                            ║
 ║                                                              ║
 ║  Features:                                                   ║
 ║  ✅ Komunikacja w czasie rzeczywistym                        ║
 ║  ✅ Obsługa wielu klientów                                   ║
-║  ✅ Interfejs konsolowy i graficzny                          ║
+║  ✅ Interfejs konsolowy i graficzny                         ║
 ║  ✅ System logowania                                         ║
 ║  ✅ Historia wiadomości                                      ║
 ║  ✅ Statystyki serwera                                       ║
@@ -45,6 +45,7 @@ def show_menu():
     print(colored.yellow("4. 📊 Pokaż demo statystyk"))
     print(colored.cyan("5. 🎨 Demo kolorów"))
     print(colored.bright_blue("6. 📝 Demo historii"))
+    print(colored.bright_magenta("7. 🔒 Demo szyfrowania"))
     print(colored.bright_red("0. ❌ Wyjście"))
     print("=" * 50)
 
@@ -151,7 +152,7 @@ def main():
         show_menu()
         
         try:
-            choice = input(colored.bold("\n🔍 Wybierz opcję (0-6): ")).strip()
+            choice = input(colored.bold("\n🔍 Wybierz opcję (0-7): ")).strip()
             
             if choice == "0":
                 print_success("Do widzenia! 👋")
@@ -168,6 +169,8 @@ def main():
                 demo_colors()
             elif choice == "6":
                 demo_history()
+            elif choice == "7":
+                demo_encryption()
             else:
                 print_warning("Nieprawidłowy wybór! Spróbuj ponownie.")
                 

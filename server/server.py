@@ -95,6 +95,19 @@ class ChatServer:
             self.running = True
             self.stats['start_time'] = datetime.datetime.now()
             
+            # Włącz szyfrowanie jeśli dostępne
+            try:
+                from common.encryption import is_encryption_available
+                if is_encryption_available():
+                    # Hasło szyfrowania - w produkcji wczytaj z bezpiecznego pliku
+                    encryption_password = "komunikator_secure_2025"
+                    Protocol.enable_encryption(encryption_password)
+                    self.log("🔒 Szyfrowanie komunikacji włączone", 'success')
+                else:
+                    self.log("⚠️ Szyfrowanie niedostępne - zainstaluj 'pip install cryptography'", 'warning')
+            except ImportError:
+                self.log("⚠️ Moduł szyfrowania niedostępny", 'warning')
+            
             # Kolorowe powitanie
             if self.use_colors:
                 print(colored.cyan("\n" + "="*60))
@@ -104,6 +117,15 @@ class ChatServer:
                 print(colored.yellow(f"👥 Maksymalnie klientów: {self.max_clients}"))
                 print(colored.blue("📂 Logi zapisywane w folderze: logs/"))
                 print(colored.magenta("🎨 Kolory: włączone"))
+                
+                # Status szyfrowania
+                try:
+                    from common.encryption import is_encryption_available
+                    encryption_status = "włączone" if is_encryption_available() else "niedostępne"
+                    print(colored.bright_red(f"🔒 Szyfrowanie: {encryption_status}"))
+                except:
+                    print(colored.bright_red("🔒 Szyfrowanie: niedostępne"))
+                    
                 print(colored.cyan("="*60 + "\n"))
             
             self.log(f"Serwer uruchomiony na {self.host}:{self.port}", 'success')
@@ -142,7 +164,7 @@ class ChatServer:
                 except Exception as e:
                     self.log(f"Nieoczekiwany błąd: {e}", 'error')
                     break
-                    
+                
         except Exception as e:
             self.log(f"Błąd serwera: {e}", 'error')
         finally:
@@ -323,8 +345,46 @@ class ChatServer:
             history_saved = self.history.save_history()
             return f"Zapisano: statystyki={'✅' if stats_saved else '❌'}, historia={'✅' if history_saved else '❌'}"
         
+        elif base_cmd == "/encryption":
+            try:
+                from common.encryption import is_encryption_available, default_encryption
+                if is_encryption_available():
+                    info = default_encryption.get_encryption_info()
+                    result = "🔒 INFORMACJE O SZYFROWANIU:\n"
+                    result += f"   Dostępne: {'✅' if info['available'] else '❌'}\n"
+                    result += f"   Algorytm: {info['algorithm']}\n"
+                    result += f"   Wyprowadzanie klucza: {info['key_derivation']}\n"
+                    result += f"   Iteracje PBKDF2: {info['iterations']}\n"
+                    result += f"   Włączone: {'✅' if Protocol.encryption_enabled else '❌'}\n"
+                    
+                    # Dodatkowe statystyki
+                    with self.clients_lock:
+                        active_clients = len(self.clients)
+                    result += f"   Chronionych połączeń: {active_clients}\n"
+                    
+                    return result
+                else:
+                    return "❌ Szyfrowanie niedostępne - zainstaluj 'pip install cryptography'"
+            except ImportError:
+                return "❌ Moduł szyfrowania niedostępny"
+            except Exception as e:
+                return f"❌ Błąd sprawdzania szyfrowania: {e}"
+        
+        elif base_cmd == "/help":
+            # Lista wszystkich komend administratora
+            help_text = """🔧 KOMENDY ADMINISTRATORA:
+/stats - statystyki serwera
+/history - ostatnie wiadomości
+/history export - eksportuj historię
+/kick <nick> [powód] - wyrzuć użytkownika
+/broadcast <wiadomość> - ogłoszenie dla wszystkich
+/save - zapisz statystyki i historię
+/encryption - informacje o szyfrowaniu
+/help - ta pomoc"""
+            return help_text
+        
         else:
-            return f"Nieznana komenda administratora: {command}"
+            return f"Nieznana komenda administratora: {command}\nWpisz /help aby zobaczyć dostępne komendy."
     
     def shutdown(self):
         """Wyłącza serwer"""
