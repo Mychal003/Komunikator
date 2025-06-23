@@ -24,6 +24,18 @@ class ChatClient:
             self.connected = True
             print(f"🔗 Połączono z serwerem {self.host}:{self.port}")
             
+            # Włącz szyfrowanie jeśli dostępne
+            try:
+                from common.encryption import is_encryption_available
+                if is_encryption_available():
+                    encryption_password = "komunikator_secure_2025"  # TO SAMO co serwer
+                    Protocol.enable_encryption(encryption_password)
+                    print("🔒 Szyfrowanie komunikacji włączone")
+                else:
+                    print("⚠️ Szyfrowanie niedostępne - zainstaluj 'pip install cryptography'")
+            except ImportError:
+                print("⚠️ Moduł szyfrowania niedostępny")
+            
             # Uruchom wątek odbierający wiadomości
             self.receiving_thread = threading.Thread(target=self.receive_messages)
             self.receiving_thread.daemon = True
@@ -58,9 +70,12 @@ class ChatClient:
         user = message.get('user', '')
         content = message.get('content', '')
         timestamp = message.get('timestamp', '')
+        encrypted = message.get('encrypted', False)
         
         if msg_type == MessageType.MESSAGE:
-            print(f"[{timestamp}] {user}: {content}")
+            # Pokaż ikonę zamka dla zaszyfrowanych wiadomości
+            encryption_icon = "🔒" if encrypted else ""
+            print(f"[{timestamp}] {user}: {content} {encryption_icon}")
             
         elif msg_type == MessageType.SYSTEM:
             print(f"🔔 SYSTEM: {content}")
@@ -102,7 +117,19 @@ class ChatClient:
     def start_chat(self):
         """Główna pętla czatu"""
         print("\n🎉 Jesteś w czacie! Wpisz /help aby zobaczyć dostępne komendy.")
-        print("Wpisz /quit aby wyjść z czatu.\n")
+        print("Wpisz /quit aby wyjść z czatu.")
+        
+        # Pokaż status szyfrowania
+        try:
+            from common.encryption import is_encryption_available
+            if is_encryption_available() and Protocol.encryption_enabled:
+                print("🔒 Twoje wiadomości są szyfrowane end-to-end!")
+            else:
+                print("⚠️ Komunikacja NIE jest szyfrowana")
+        except:
+            print("⚠️ Nie można sprawdzić statusu szyfrowania")
+        
+        print()  # Pusta linia
         
         try:
             while self.connected:
@@ -121,8 +148,12 @@ class ChatClient:
                     
                     elif user_input.startswith('/'):
                         # Komenda
-                        command_message = Protocol.create_message(MessageType.MESSAGE, self.nick, user_input)
-                        self.send_message(command_message)
+                        if user_input.strip() == '/status':
+                            # Pokaż status szyfrowania
+                            self.show_encryption_status()
+                        else:
+                            command_message = Protocol.create_message(MessageType.MESSAGE, self.nick, user_input)
+                            self.send_message(command_message)
                     
                     else:
                         # Zwykła wiadomość
@@ -138,6 +169,27 @@ class ChatClient:
                     
         finally:
             self.disconnect()
+    
+    def show_encryption_status(self):
+        """Pokazuje status szyfrowania"""
+        try:
+            from common.encryption import is_encryption_available, default_encryption
+            
+            print("🔒 STATUS SZYFROWANIA:")
+            print(f"   Biblioteka dostępna: {'✅' if is_encryption_available() else '❌'}")
+            print(f"   Szyfrowanie włączone: {'✅' if Protocol.encryption_enabled else '❌'}")
+            
+            if is_encryption_available():
+                info = default_encryption.get_encryption_info()
+                print(f"   Algorytm: {info['algorithm']}")
+                print(f"   Wyprowadzanie klucza: {info['key_derivation']}")
+                print(f"   Iteracje PBKDF2: {info['iterations']}")
+            
+            print()
+        except ImportError:
+            print("❌ Moduł szyfrowania niedostępny")
+        except Exception as e:
+            print(f"❌ Błąd sprawdzania szyfrowania: {e}")
     
     def disconnect(self):
         """Rozłącza się z serwerem"""
@@ -160,6 +212,18 @@ class ChatClient:
 
 def main():
     print("🗨️  Komunikator IP - Klient")
+    print("=" * 30)
+    
+    # Sprawdź dostępność szyfrowania
+    try:
+        from common.encryption import is_encryption_available
+        if is_encryption_available():
+            print("🔒 Szyfrowanie: dostępne")
+        else:
+            print("⚠️ Szyfrowanie: niedostępne (zainstaluj 'cryptography')")
+    except ImportError:
+        print("⚠️ Szyfrowanie: moduł niedostępny")
+    
     print("=" * 30)
     
     # Pobierz adres serwera
