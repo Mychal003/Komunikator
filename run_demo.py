@@ -144,6 +144,17 @@ def run_gui_client():
     except Exception as e:
         print(colored.error(f"Błąd GUI: {e}"))
 
+def demo_encryption():
+    """Demonstracja szyfrowania"""
+    print_info("Demo systemu szyfrowania...")
+    
+    try:
+        from common.encryption import demo_encryption as run_demo
+        run_demo()
+    except ImportError:
+        print_warning("Moduł szyfrowania niedostępny - zainstaluj 'cryptography'")
+        print("Uruchom: pip install cryptography")
+
 def main():
     """Główna funkcja"""
     print_banner()

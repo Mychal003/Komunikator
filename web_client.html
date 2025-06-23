@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🗨️ Komunikator IP</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .app-container {
+            display: flex;
+            height: 100vh;
+            backdrop-filter: blur(20px);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 320px;
+            background: rgba(30, 30, 30, 0.95);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .app-title {
+            color: #fff;
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ef4444;
+            transition: all 0.3s ease;
+        }
+
+        .status-dot.connected {
+            background: #10b981;
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+        }
+
+        .status-text {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+        }
+
+        .connection-form {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .input-group label {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .input {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            padding: 12px 16px;
+            color: #fff;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border: none;
+            border-radius: 12px;
+            padding: 12px 24px;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn.disconnect {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+        }
+
+        .encryption-status {
+            margin-top: 20px;
+            padding: 16px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .encryption-icon {
+            font-size: 20px;
+        }
+
+        .encryption-text {
+            color: #10b981;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* Users list */
+        .users-section {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        .users-title {
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .user-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .user-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .user-name {
+            color: #fff;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .user-you {
+            color: #10b981;
+        }
+
+        /* Main chat area */
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .chat-header {
+            padding: 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .chat-title {
+            color: #fff;
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .chat-subtitle {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+        }
+
+        .messages-container {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            margin-bottom: 16px;
+            animation: slideInUp 0.3s ease;
+        }
+
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+
+        .message-author {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .message-time {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+        }
+
+        .message-encryption {
+            color: #10b981;
+            font-size: 12px;
+        }
+
+        .message-content {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 12px 16px;
+            color: #fff;
+            line-height: 1.5;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .message.own .message-content {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            margin-left: 40px;
+        }
+
+        .message.own .message-author {
+            color: #10b981;
+        }
+
+        .message.system .message-content {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.3);
+            font-style: italic;
+        }
+
+        .message.system .message-author {
+            color: #3b82f6;
+        }
+
+        .message.error .message-content {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .message.error .message-author {
+            color: #ef4444;
+        }
+
+        /* Input area */
+        .input-area {
+            padding: 24px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .input-container {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .message-input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
+            padding: 12px 20px;
+            color: #fff;
+            font-size: 14px;
+            resize: none;
+            min-height: 44px;
+            max-height: 120px;
+            transition: all 0.3s ease;
+        }
+
+        .message-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border: none;
+            border-radius: 50%;
+            width: 44px;
+            height: 44px;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100vw;
+                position: absolute;
+                z-index: 10;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .chat-area {
+                width: 100vw;
+            }
+        }
+
+        /* Loading animation */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Glassmorphism effects */
+        .glass {
+            backdrop-filter: blur(20px);
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        /* Floating action button */
+        .fab {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border: none;
+            color: #fff;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            z-index: 100;
+        }
+
+        .fab:hover {
+            transform: scale(1.1);
+            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
+        }
+
+        /* Notification badge */
+        .notification-badge {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #ef4444;
+            color: #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h1 class="app-title">🗨️ Komunikator IP</h1>
+                
+                <div class="connection-status">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span class="status-text" id="statusText">Rozłączony</span>
+                </div>
+
+                <form class="connection-form" id="connectionForm">
+                    <div class="input-group">
+                        <label for="hostInput">Adres serwera</label>
+                        <input type="text" id="hostInput" class="input" placeholder="localhost" value="localhost">
+                    </div>
+                    
+                    <div class="input-group">
+                        <label for="portInput">Port</label>
+                        <input type="number" id="portInput" class="input" placeholder="12345" value="12345">
+                    </div>
+                    
+                    <div class="input-group">
+                        <label for="nickInput">Twój nick</label>
+                        <input type="text" id="nickInput" class="input" placeholder="Wprowadź nick" maxlength="20">
+                    </div>
+                    
+                    <button type="submit" class="btn" id="connectBtn">
+                        <span id="connectBtnText">Połącz</span>
+                    </button>
+                </form>
+
+                <div class="encryption-status glass" id="encryptionStatus" style="display: none;">
+                    <span class="encryption-icon">🔒</span>
+                    <span class="encryption-text">Komunikacja zaszyfrowana</span>
+                </div>
+            </div>
+
+            <div class="users-section">
+                <h3 class="users-title">Użytkownicy online (<span id="userCount">0</span>)</h3>
+                <div id="usersList">
+                    <!-- Users will be dynamically added here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Main chat area -->
+        <div class="chat-area">
+            <div class="chat-header">
+                <h2 class="chat-title" id="chatTitle">Komunikator IP</h2>
+                <p class="chat-subtitle" id="chatSubtitle">Połącz się z serwerem aby rozpocząć czat</p>
+            </div>
+
+            <div class="messages-container" id="messagesContainer">
+                <div class="message system">
+                    <div class="message-header">
+                        <span class="message-author">System</span>
+                        <span class="message-time">Teraz</span>
+                    </div>
+                    <div class="message-content">
+                        Witaj w komunikatorze IP! Połącz się z serwerem aby rozpocząć rozmowę.
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-container">
+                    <textarea 
+                        id="messageInput" 
+                        class="message-input" 
+                        placeholder="Napisz wiadomość... (Ctrl+Enter aby wysłać)"
+                        disabled
+                        rows="1"></textarea>
+                    <button class="send-btn" id="sendBtn" disabled>
+                        ➤
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating action button for mobile -->
+    <button class="fab" id="menuToggle" style="display: none;">
+        ☰
+    </button>
+
+    <script>
+        class ChatApp {
+            constructor() {
+                this.socket = null;
+                this.connected = false;
+                this.nick = '';
+                this.encryptionEnabled = false;
+                
+                this.initializeElements();
+                this.bindEvents();
+                this.checkEncryption();
+            }
+
+            initializeElements() {
+                this.elements = {
+                    statusDot: document.getElementById('statusDot'),
+                    statusText: document.getElementById('statusText'),
+                    connectionForm: document.getElementById('connectionForm'),
+                    hostInput: document.getElementById('hostInput'),
+                    portInput: document.getElementById('portInput'),
+                    nickInput: document.getElementById('nickInput'),
+                    connectBtn: document.getElementById('connectBtn'),
+                    connectBtnText: document.getElementById('connectBtnText'),
+                    encryptionStatus: document.getElementById('encryptionStatus'),
+                    chatTitle: document.getElementById('chatTitle'),
+                    chatSubtitle: document.getElementById('chatSubtitle'),
+                    messagesContainer: document.getElementById('messagesContainer'),
+                    messageInput: document.getElementById('messageInput'),
+                    sendBtn: document.getElementById('sendBtn'),
+                    usersList: document.getElementById('usersList'),
+                    userCount: document.getElementById('userCount'),
+                    menuToggle: document.getElementById('menuToggle'),
+                    sidebar: document.getElementById('sidebar')
+                };
+            }
+
+            bindEvents() {
+                this.elements.connectionForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.toggleConnection();
+                });
+
+                this.elements.sendBtn.addEventListener('click', () => {
+                    this.sendMessage();
+                });
+
+                this.elements.messageInput.addEventListener('keydown', (e) => {
+                    if (e.ctrlKey && e.key === 'Enter') {
+                        this.sendMessage();
+                    }
+                });
+
+                this.elements.messageInput.addEventListener('input', () => {
+                    this.autoResize();
+                });
+
+                this.elements.menuToggle.addEventListener('click', () => {
+                    this.elements.sidebar.classList.toggle('open');
+                });
+
+                // Auto-resize textarea
+                this.autoResize();
+            }
+
+            autoResize() {
+                const textarea = this.elements.messageInput;
+                textarea.style.height = 'auto';
+                textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+            }
+
+            checkEncryption() {
+                // Simulacja sprawdzenia dostępności szyfrowania
+                // W rzeczywistej implementacji sprawdziłbyś to przez WebSocket
+                setTimeout(() => {
+                    this.encryptionEnabled = true;
+                    this.addMessage('System', '🔒 Szyfrowanie dostępne', 'system', new Date());
+                }, 1000);
+            }
+
+            toggleConnection() {
+                if (!this.connected) {
+                    this.connect();
+                } else {
+                    this.disconnect();
+                }
+            }
+
+            connect() {
+                const host = this.elements.hostInput.value.trim() || 'localhost';
+                const port = this.elements.portInput.value.trim() || '12345';
+                const nick = this.elements.nickInput.value.trim();
+
+                if (!nick) {
+                    this.addMessage('System', 'Wprowadź nick przed połączeniem', 'error', new Date());
+                    return;
+                }
+
+                // Symulacja połączenia (w rzeczywistości użyłbyś WebSocket)
+                this.elements.connectBtnText.innerHTML = '<div class="loading"></div>';
+                this.elements.connectBtn.disabled = true;
+
+                setTimeout(() => {
+                    this.connected = true;
+                    this.nick = nick;
+                    this.updateConnectionStatus();
+                    this.addMessage('System', `Połączono z ${host}:${port} jako ${nick}`, 'system', new Date());
+                    
+                    if (this.encryptionEnabled) {
+                        this.elements.encryptionStatus.style.display = 'flex';
+                        this.addMessage('System', '🔒 Szyfrowanie komunikacji włączone', 'system', new Date());
+                    }
+
+                    // Symulacja listy użytkowników
+                    this.updateUsersList([nick, 'Jan', 'Anna']);
+                    
+                    // Symulacja otrzymanych wiadomości
+                    setTimeout(() => {
+                        this.addMessage('Jan', 'Witaj w czacie!', 'user', new Date(), true);
+                    }, 2000);
+
+                }, 1500);
+            }
+
+            disconnect() {
+                this.connected = false;
+                this.updateConnectionStatus();
+                this.addMessage('System', 'Rozłączono z serwerem', 'system', new Date());
+                this.elements.encryptionStatus.style.display = 'none';
+                this.updateUsersList([]);
+            }
+
+            updateConnectionStatus() {
+                if (this.connected) {
+                    this.elements.statusDot.classList.add('connected');
+                    this.elements.statusText.textContent = 'Połączony';
+                    this.elements.connectBtnText.textContent = 'Rozłącz';
+                    this.elements.connectBtn.classList.add('disconnect');
+                    this.elements.connectBtn.disabled = false;
+                    this.elements.messageInput.disabled = false;
+                    this.elements.sendBtn.disabled = false;
+                    this.elements.chatTitle.textContent = `Czat - ${this.nick}`;
+                    this.elements.chatSubtitle.textContent = 'Połączony z serwerem';
+                    
+                    // Disable form inputs
+                    this.elements.hostInput.disabled = true;
+                    this.elements.portInput.disabled = true;
+                    this.elements.nickInput.disabled = true;
+                } else {
+                    this.elements.statusDot.classList.remove('connected');
+                    this.elements.statusText.textContent = 'Rozłączony';
+                    this.elements.connectBtnText.textContent = 'Połącz';
+                    this.elements.connectBtn.classList.remove('disconnect');
+                    this.elements.connectBtn.disabled = false;
+                    this.elements.messageInput.disabled = true;
+                    this.elements.sendBtn.disabled = true;
+                    this.elements.chatTitle.textContent = 'Komunikator IP';
+                    this.elements.chatSubtitle.textContent = 'Połącz się z serwerem aby rozpocząć czat';
+                    
+                    // Enable form inputs
+                    this.elements.hostInput.disabled = false;
+                    this.elements.portInput.disabled = false;
+                    this.elements.nickInput.disabled = false;
+                }
+            }
+
+            sendMessage() {
+                if (!this.connected) return;
+
+                const content = this.elements.messageInput.value.trim();
+                if (!content) return;
+
+                this.addMessage(this.nick, content, 'own', new Date(), this.encryptionEnabled);
+                this.elements.messageInput.value = '';
+                this.autoResize();
+
+                // Symulacja odpowiedzi
+                if (content.toLowerCase().includes('cześć')) {
+                    setTimeout(() => {
+                        this.addMessage('Anna', 'Cześć! Jak się masz?', 'user', new Date(), true);
+                    }, 1000 + Math.random() * 2000);
+                }
+            }
+
+            addMessage(author, content, type, timestamp, encrypted = false) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type}`;
+
+                const timeStr = timestamp.toLocaleTimeString('pl-PL', { 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                });
+
+                const encryptionIcon = encrypted ? '<span class="message-encryption">🔒</span>' : '';
+
+                messageDiv.innerHTML = `
+                    <div class="message-header">
+                        <span class="message-author">${author}</span>
+                        <span class="message-time">${timeStr}</span>
+                        ${encryptionIcon}
+                    </div>
+                    <div class="message-content">${content}</div>
+                `;
+
+                this.elements.messagesContainer.appendChild(messageDiv);
+                this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
+            }
+
+            updateUsersList(users) {
+                this.elements.userCount.textContent = users.length;
+                this.elements.usersList.innerHTML = '';
+
+                users.forEach(user => {
+                    const userDiv = document.createElement('div');
+                    userDiv.className = 'user-item';
+                    
+                    const isCurrentUser = user === this.nick;
+                    const avatar = user.charAt(0).toUpperCase();
+                    
+                    userDiv.innerHTML = `
+                        <div class="user-avatar">${avatar}</div>
+                        <span class="user-name ${isCurrentUser ? 'user-you' : ''}">${user}${isCurrentUser ? ' (Ty)' : ''}</span>
+                    `;
+                    
+                    this.elements.usersList.appendChild(userDiv);
+                });
+            }
+        }
+
+        // Initialize the app
+        document.addEventListener('DOMContentLoaded', () => {
+            new ChatApp();
+        });
+
+        // Responsive handling
+        function handleResize() {
+            const menuToggle = document.getElementById('menuToggle');
+            if (window.innerWidth <= 768) {
+                menuToggle.style.display = 'flex';
+            } else {
+                menuToggle.style.display = 'none';
+                document.getElementById('sidebar').classList.remove('open');
+            }
+        }
+
+        window.addEventListener('resize', handleResize);
+        handleResize();
+    </script>
+</body>
+</html>

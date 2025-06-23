@@ -10,3 +10,5 @@
 # Ewentualne dodatkowe biblioteki:
 # cryptography>=3.4.8  # dla szyfrowania wiadomości
 # colorama>=0.4.4      # dla kolorowego tekstu w konsoli
+# websockets>=10.0
+# asyncio
