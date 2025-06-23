@@ -9,6 +9,7 @@ import websockets
 import json
 import socket
 import threading
+import time
 import sys
 import os
 from typing import Dict, Set
@@ -31,11 +32,17 @@ class WebSocketBridge:
         # TCP połączenia {nick: tcp_socket}
         self.tcp_connections: Dict[str, socket.socket] = {}
         
+        # Bridge TCP connection - pojedyncze połączenie do serwera dla przekazywania wiadomości
+        self.bridge_socket = None
+        self.bridge_connected = False
+        self.bridge_nick = "🌉WebBridge"
+        
         print(f"🌐 WebSocket Bridge uruchamiany...")
         print(f"   WebSocket serwer: ws://localhost:{ws_port}")
         print(f"   TCP serwer: {tcp_host}:{tcp_port}")
+        print(f"   Bridge obsługuje TCP boty: ✅")
 
-    async def handle_websocket_connection(self, websocket, path):
+    async def handle_websocket_connection(self, websocket):
         """Obsługuje nowe połączenie WebSocket"""
         client_ip = websocket.remote_address[0]
         print(f"🔗 Nowe połączenie WebSocket z {client_ip}")
@@ -120,40 +127,26 @@ class WebSocketBridge:
             })
             return
         
+        # Sprawdź czy TCP Bridge jest połączony
+        if not self.bridge_connected:
+            await self.send_to_websocket(websocket, {
+                'type': 'connection_error',
+                'message': 'Serwer TCP niedostępny'
+            })
+            return
+        
         try:
-            # Połącz z TCP serwerem
-            tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            tcp_socket.settimeout(10)
-            tcp_socket.connect((host, port))
-            
-            # Włącz szyfrowanie
-            try:
-                from common.encryption import is_encryption_available
-                if is_encryption_available():
-                    encryption_password = "komunikator_secure_2025"
-                    Protocol.enable_encryption(encryption_password)
-            except ImportError:
-                pass
-            
-            # Wyślij JOIN message
+            # Wyślij JOIN message przez TCP Bridge
             join_message = Protocol.create_message(MessageType.JOIN, nick)
-            tcp_socket.send(join_message.encode('utf-8'))
+            self.bridge_socket.send(join_message.encode('utf-8'))
             
-            # Zaktualizuj informacje o kliencie
+            # Zaktualizuj informacje o kliencie WebSocket
             client_info = self.websocket_clients[websocket]
             client_info['nick'] = nick
-            client_info['tcp_socket'] = tcp_socket
             client_info['connected'] = True
             
-            self.tcp_connections[nick] = tcp_socket
-            
-            # Uruchom wątek odbierający wiadomości z TCP
-            tcp_thread = threading.Thread(
-                target=self.tcp_receive_loop, 
-                args=(websocket, tcp_socket, nick)
-            )
-            tcp_thread.daemon = True
-            tcp_thread.start()
+            # Dodaj do rejestru (nie potrzebujemy osobnego TCP socketa)
+            self.tcp_connections[nick] = websocket  # Używamy WebSocket jako identyfikator
             
             # Powiadom WebSocket o sukcesie
             await self.send_to_websocket(websocket, {
@@ -164,13 +157,8 @@ class WebSocketBridge:
                 'encryption': Protocol.encryption_enabled
             })
             
-            print(f"✅ {nick} połączony z TCP serwerem przez WebSocket")
+            print(f"✅ {nick} połączony przez WebSocket Bridge")
             
-        except socket.timeout:
-            await self.send_to_websocket(websocket, {
-                'type': 'connection_error',
-                'message': 'Timeout połączenia z serwerem'
-            })
         except socket.error as e:
             await self.send_to_websocket(websocket, {
                 'type': 'connection_error',
@@ -186,18 +174,12 @@ class WebSocketBridge:
         """Obsługuje żądanie rozłączenia"""
         client_info = self.websocket_clients.get(websocket, {})
         nick = client_info.get('nick')
-        tcp_socket = client_info.get('tcp_socket')
         
-        if tcp_socket and nick:
+        if nick and self.bridge_connected:
             try:
-                # Wyślij LEAVE message
+                # Wyślij LEAVE message przez TCP Bridge
                 leave_message = Protocol.create_message(MessageType.LEAVE, nick)
-                tcp_socket.send(leave_message.encode('utf-8'))
-            except:
-                pass
-            
-            try:
-                tcp_socket.close()
+                self.bridge_socket.send(leave_message.encode('utf-8'))
             except:
                 pass
             
@@ -205,11 +187,10 @@ class WebSocketBridge:
             if nick in self.tcp_connections:
                 del self.tcp_connections[nick]
             
-            print(f"👋 {nick} rozłączony")
+            print(f"👋 {nick} rozłączony przez WebSocket")
         
         # Aktualizuj informacje o kliencie
         client_info['connected'] = False
-        client_info['tcp_socket'] = None
         
         await self.send_to_websocket(websocket, {
             'type': 'disconnected'
@@ -226,7 +207,6 @@ class WebSocketBridge:
             return
         
         nick = client_info.get('nick')
-        tcp_socket = client_info.get('tcp_socket')
         content = data.get('content', '').strip()
         
         # Walidacja wiadomości
@@ -239,9 +219,15 @@ class WebSocketBridge:
             return
         
         try:
-            # Wyślij wiadomość do TCP serwera
-            chat_message = Protocol.create_message(MessageType.MESSAGE, nick, content)
-            tcp_socket.send(chat_message.encode('utf-8'))
+            # Wyślij wiadomość przez TCP Bridge zamiast indywidualnego połączenia
+            if self.bridge_connected and self.bridge_socket:
+                chat_message = Protocol.create_message(MessageType.MESSAGE, nick, content)
+                self.bridge_socket.send(chat_message.encode('utf-8'))
+            else:
+                await self.send_to_websocket(websocket, {
+                    'type': 'error',
+                    'message': 'Bridge TCP rozłączony'
+                })
             
         except socket.error as e:
             await self.send_to_websocket(websocket, {
@@ -294,11 +280,19 @@ class WebSocketBridge:
         """Konwertuje wiadomość TCP na format WebSocket"""
         msg_type = tcp_message.get('type', '')
         user = tcp_message.get('user', '')
-        content = tcp_message.get('content', '')
+        content = tcp_message.get('content', '').strip()  # ✅ Usuń białe znaki
         timestamp = tcp_message.get('timestamp', '')
         encrypted = tcp_message.get('encrypted', False)
         
+        # ✅ Filtruj puste wiadomości systemowe
+        if msg_type == MessageType.SYSTEM and not content:
+            return None  # Nie przekazuj pustych wiadomości systemowych
+        
         if msg_type == MessageType.MESSAGE:
+            # ✅ Filtruj puste wiadomości czatu
+            if not content:
+                return None
+                
             return {
                 'type': 'message',
                 'author': user,
@@ -307,11 +301,13 @@ class WebSocketBridge:
                 'encrypted': encrypted
             }
         elif msg_type == MessageType.SYSTEM:
-            return {
-                'type': 'system_message',
-                'content': content,
-                'timestamp': timestamp
-            }
+            # ✅ Tylko niepuste wiadomości systemowe
+            if content:
+                return {
+                    'type': 'system_message',
+                    'content': content,
+                    'timestamp': timestamp
+                }
         elif msg_type == MessageType.USER_LIST:
             try:
                 users = json.loads(content)
@@ -320,20 +316,15 @@ class WebSocketBridge:
                     'users': users
                 }
             except:
-                return {
-                    'type': 'system_message',
-                    'content': 'Błąd parsowania listy użytkowników'
-                }
+                return None  # Błąd parsowania - nie przekazuj
         elif msg_type == MessageType.ERROR:
-            return {
-                'type': 'error',
-                'message': content
-            }
-        else:
-            return {
-                'type': 'unknown',
-                'content': content
-            }
+            if content:  # ✅ Tylko niepuste błędy
+                return {
+                    'type': 'error',
+                    'message': content
+                }
+        
+        return None  # Nie przekazuj nieznanych/pustych wiadomości
 
     async def send_to_websocket(self, websocket, data):
         """Wysyła dane do WebSocket"""
@@ -378,6 +369,11 @@ class WebSocketBridge:
         """Uruchamia WebSocket serwer"""
         print(f"🚀 Uruchamianie WebSocket serwera na porcie {self.ws_port}...")
         
+        # Uruchom bridge TCP connection w osobnym wątku
+        bridge_thread = threading.Thread(target=self.start_tcp_bridge)
+        bridge_thread.daemon = True
+        bridge_thread.start()
+        
         server = await websockets.serve(
             self.handle_websocket_connection,
             "localhost",
@@ -387,8 +383,87 @@ class WebSocketBridge:
         print(f"✅ WebSocket Bridge gotowy!")
         print(f"   Otwórz przeglądarkę: http://localhost:8000")
         print(f"   WebSocket endpoint: ws://localhost:{self.ws_port}")
+        print(f"   TCP Bridge: {'✅ Połączony' if self.bridge_connected else '❌ Rozłączony'}")
         
         await server.wait_closed()
+
+    def start_tcp_bridge(self):
+        """Uruchamia TCP bridge connection w osobnym wątku"""
+        while True:
+            try:
+                print(f"🌉 Łączenie TCP Bridge z serwerem...")
+                self.bridge_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.bridge_socket.settimeout(30)
+                self.bridge_socket.connect((self.tcp_host, self.tcp_port))
+                
+                # Włącz szyfrowanie jeśli dostępne
+                try:
+                    from common.encryption import is_encryption_available
+                    if is_encryption_available():
+                        encryption_password = "komunikator_secure_2025"
+                        Protocol.enable_encryption(encryption_password)
+                        print("🔒 Szyfrowanie włączone dla TCP Bridge")
+                except ImportError:
+                    pass
+                
+                # Wyślij JOIN message dla bridge
+                join_message = Protocol.create_message(MessageType.JOIN, self.bridge_nick)
+                self.bridge_socket.send(join_message.encode('utf-8'))
+                
+                self.bridge_connected = True
+                print(f"✅ TCP Bridge połączony jako {self.bridge_nick}")
+                
+                # Pętla odbierania wiadomości z TCP serwera
+                while self.bridge_connected:
+                    try:
+                        data = self.bridge_socket.recv(1024).decode('utf-8')
+                        if not data:
+                            break
+                        
+                        message = Protocol.parse_message(data)
+                        
+                        # Przekaż wiadomość do wszystkich WebSocket klientów
+                        if message.get('user') != self.bridge_nick:  # Nie przekazuj własnych wiadomości
+                            asyncio.run(self.broadcast_to_websockets(message))
+                            
+                    except socket.timeout:
+                        continue
+                    except socket.error as e:
+                        print(f"❌ Błąd TCP Bridge: {e}")
+                        break
+                
+                self.bridge_connected = False
+                print("🔌 TCP Bridge rozłączony")
+                
+            except Exception as e:
+                print(f"❌ Błąd TCP Bridge: {e}")
+                self.bridge_connected = False
+                
+            # Próba ponownego połączenia po 5 sekundach
+            if not self.bridge_connected:
+                print("🔄 Próba ponownego połączenia TCP Bridge za 5 sekund...")
+                time.sleep(5)
+
+    async def broadcast_to_websockets(self, ws_message):
+        """Przekazuje wiadomość do wszystkich klientów WebSocket"""
+        if not self.websocket_clients or not ws_message:
+            return
+        
+        # Wyślij do wszystkich połączonych WebSocket klientów
+        disconnected = []
+        for websocket in self.websocket_clients:
+            try:
+                await websocket.send(json.dumps(ws_message))
+            except websockets.exceptions.ConnectionClosed:
+                disconnected.append(websocket)
+            except Exception as e:
+                print(f"❌ Błąd wysyłania do WebSocket: {e}")
+                disconnected.append(websocket)
+        
+        # Usuń rozłączonych klientów
+        for ws in disconnected:
+            if ws in self.websocket_clients:
+                del self.websocket_clients[ws]
 
 def main():
     """Główna funkcja"""

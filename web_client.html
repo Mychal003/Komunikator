@@ -1,4 +1,13 @@
-<!DOCTYPE html>
+#!/usr/bin/env python3
+"""
+Quick fix - naprawia importy i tworzy brakujące pliki
+"""
+
+import os
+
+def create_web_client_html():
+    """Tworzy plik web_client.html"""
+    html_content = '''<!DOCTYPE html>
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
@@ -323,6 +332,15 @@
             color: #ef4444;
         }
 
+        .message.bot .message-content {
+            background: linear-gradient(135deg, #10b981, #059669);
+            border-left: 4px solid #34d399;
+        }
+
+        .message.bot .message-author {
+            color: #10b981;
+        }
+
         /* Input area */
         .input-area {
             padding: 24px;
@@ -435,53 +453,6 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
-
-        /* Glassmorphism effects */
-        .glass {
-            backdrop-filter: blur(20px);
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-
-        /* Floating action button */
-        .fab {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            width: 56px;
-            height: 56px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            border: none;
-            color: #fff;
-            font-size: 24px;
-            cursor: pointer;
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
-            transition: all 0.3s ease;
-            z-index: 100;
-        }
-
-        .fab:hover {
-            transform: scale(1.1);
-            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
-        }
-
-        /* Notification badge */
-        .notification-badge {
-            position: absolute;
-            top: -8px;
-            right: -8px;
-            background: #ef4444;
-            color: #fff;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-        }
     </style>
 </head>
 <body>
@@ -517,7 +488,7 @@
                     </button>
                 </form>
 
-                <div class="encryption-status glass" id="encryptionStatus" style="display: none;">
+                <div class="encryption-status" id="encryptionStatus" style="display: none;">
                     <span class="encryption-icon">🔒</span>
                     <span class="encryption-text">Komunikacja zaszyfrowana</span>
                 </div>
@@ -566,11 +537,6 @@
         </div>
     </div>
 
-    <!-- Floating action button for mobile -->
-    <button class="fab" id="menuToggle" style="display: none;">
-        ☰
-    </button>
-
     <script>
         class ChatApp {
             constructor() {
@@ -581,7 +547,7 @@
                 
                 this.initializeElements();
                 this.bindEvents();
-                this.checkEncryption();
+                this.connectWebSocket();
             }
 
             initializeElements() {
@@ -601,9 +567,7 @@
                     messageInput: document.getElementById('messageInput'),
                     sendBtn: document.getElementById('sendBtn'),
                     usersList: document.getElementById('usersList'),
-                    userCount: document.getElementById('userCount'),
-                    menuToggle: document.getElementById('menuToggle'),
-                    sidebar: document.getElementById('sidebar')
+                    userCount: document.getElementById('userCount')
                 };
             }
 
@@ -627,27 +591,91 @@
                     this.autoResize();
                 });
 
-                this.elements.menuToggle.addEventListener('click', () => {
-                    this.elements.sidebar.classList.toggle('open');
-                });
-
-                // Auto-resize textarea
                 this.autoResize();
+            }
+
+            connectWebSocket() {
+                try {
+                    this.socket = new WebSocket('ws://localhost:8765');
+                    
+                    this.socket.onopen = () => {
+                        console.log('WebSocket połączony');
+                        this.addMessage('System', '🌐 WebSocket połączony', 'system', new Date());
+                    };
+
+                    this.socket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        this.handleServerMessage(data);
+                    };
+
+                    this.socket.onclose = () => {
+                        console.log('WebSocket rozłączony');
+                        this.addMessage('System', '❌ WebSocket rozłączony', 'error', new Date());
+                        setTimeout(() => this.connectWebSocket(), 3000);
+                    };
+
+                    this.socket.onerror = (error) => {
+                        console.error('Błąd WebSocket:', error);
+                        this.addMessage('System', '❌ Błąd WebSocket', 'error', new Date());
+                    };
+
+                } catch (error) {
+                    console.error('Nie można połączyć WebSocket:', error);
+                    this.addMessage('System', '❌ Nie można połączyć z WebSocket', 'error', new Date());
+                }
+            }
+
+            handleServerMessage(data) {
+                switch (data.type) {
+                    case 'connected':
+                        this.connected = true;
+                        this.nick = data.nick;
+                        this.encryptionEnabled = data.encryption;
+                        this.updateConnectionStatus();
+                        this.addMessage('System', `✅ Połączono jako ${data.nick}`, 'system', new Date());
+                        if (this.encryptionEnabled) {
+                            this.elements.encryptionStatus.style.display = 'flex';
+                            this.addMessage('System', '🔒 Szyfrowanie włączone', 'system', new Date());
+                        }
+                        break;
+
+                    case 'disconnected':
+                        this.connected = false;
+                        this.updateConnectionStatus();
+                        this.elements.encryptionStatus.style.display = 'none';
+                        this.addMessage('System', '👋 Rozłączono', 'system', new Date());
+                        this.updateUsersList([]);
+                        break;
+
+                    case 'message':
+                        const isBot = data.author.includes('🤖') || data.author.includes('Bot');
+                        const messageType = isBot ? 'bot' : (data.author === this.nick ? 'own' : 'user');
+                        this.addMessage(data.author, data.content, messageType, new Date(data.timestamp), data.encrypted);
+                        break;
+
+                    case 'system_message':
+                        this.addMessage('System', data.content, 'system', new Date());
+                        break;
+
+                    case 'users_list':
+                        this.updateUsersList(data.users);
+                        break;
+
+                    case 'error':
+                    case 'connection_error':
+                        this.addMessage('Błąd', data.message, 'error', new Date());
+                        break;
+
+                    case 'encryption_status':
+                        this.addMessage('System', `🔒 Szyfrowanie: ${data.available ? 'dostępne' : 'niedostępne'}`, 'system', new Date());
+                        break;
+                }
             }
 
             autoResize() {
                 const textarea = this.elements.messageInput;
                 textarea.style.height = 'auto';
                 textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
-            }
-
-            checkEncryption() {
-                // Simulacja sprawdzenia dostępności szyfrowania
-                // W rzeczywistej implementacji sprawdziłbyś to przez WebSocket
-                setTimeout(() => {
-                    this.encryptionEnabled = true;
-                    this.addMessage('System', '🔒 Szyfrowanie dostępne', 'system', new Date());
-                }, 1000);
             }
 
             toggleConnection() {
@@ -668,38 +696,24 @@
                     return;
                 }
 
-                // Symulacja połączenia (w rzeczywistości użyłbyś WebSocket)
                 this.elements.connectBtnText.innerHTML = '<div class="loading"></div>';
                 this.elements.connectBtn.disabled = true;
 
-                setTimeout(() => {
-                    this.connected = true;
-                    this.nick = nick;
-                    this.updateConnectionStatus();
-                    this.addMessage('System', `Połączono z ${host}:${port} jako ${nick}`, 'system', new Date());
-                    
-                    if (this.encryptionEnabled) {
-                        this.elements.encryptionStatus.style.display = 'flex';
-                        this.addMessage('System', '🔒 Szyfrowanie komunikacji włączone', 'system', new Date());
-                    }
+                const message = {
+                    type: 'connect',
+                    host: host,
+                    port: parseInt(port),
+                    nick: nick
+                };
 
-                    // Symulacja listy użytkowników
-                    this.updateUsersList([nick, 'Jan', 'Anna']);
-                    
-                    // Symulacja otrzymanych wiadomości
-                    setTimeout(() => {
-                        this.addMessage('Jan', 'Witaj w czacie!', 'user', new Date(), true);
-                    }, 2000);
-
-                }, 1500);
+                this.socket.send(JSON.stringify(message));
             }
 
             disconnect() {
-                this.connected = false;
-                this.updateConnectionStatus();
-                this.addMessage('System', 'Rozłączono z serwerem', 'system', new Date());
-                this.elements.encryptionStatus.style.display = 'none';
-                this.updateUsersList([]);
+                const message = {
+                    type: 'disconnect'
+                };
+                this.socket.send(JSON.stringify(message));
             }
 
             updateConnectionStatus() {
@@ -714,7 +728,6 @@
                     this.elements.chatTitle.textContent = `Czat - ${this.nick}`;
                     this.elements.chatSubtitle.textContent = 'Połączony z serwerem';
                     
-                    // Disable form inputs
                     this.elements.hostInput.disabled = true;
                     this.elements.portInput.disabled = true;
                     this.elements.nickInput.disabled = true;
@@ -729,7 +742,6 @@
                     this.elements.chatTitle.textContent = 'Komunikator IP';
                     this.elements.chatSubtitle.textContent = 'Połącz się z serwerem aby rozpocząć czat';
                     
-                    // Enable form inputs
                     this.elements.hostInput.disabled = false;
                     this.elements.portInput.disabled = false;
                     this.elements.nickInput.disabled = false;
@@ -742,16 +754,14 @@
                 const content = this.elements.messageInput.value.trim();
                 if (!content) return;
 
-                this.addMessage(this.nick, content, 'own', new Date(), this.encryptionEnabled);
+                const message = {
+                    type: 'message',
+                    content: content
+                };
+
+                this.socket.send(JSON.stringify(message));
                 this.elements.messageInput.value = '';
                 this.autoResize();
-
-                // Symulacja odpowiedzi
-                if (content.toLowerCase().includes('cześć')) {
-                    setTimeout(() => {
-                        this.addMessage('Anna', 'Cześć! Jak się masz?', 'user', new Date(), true);
-                    }, 1000 + Math.random() * 2000);
-                }
             }
 
             addMessage(author, content, type, timestamp, encrypted = false) {
@@ -787,10 +797,11 @@
                     userDiv.className = 'user-item';
                     
                     const isCurrentUser = user === this.nick;
+                    const isBot = user.includes('🤖') || user.includes('Bot');
                     const avatar = user.charAt(0).toUpperCase();
                     
                     userDiv.innerHTML = `
-                        <div class="user-avatar">${avatar}</div>
+                        <div class="user-avatar" style="${isBot ? 'background: linear-gradient(135deg, #10b981, #059669);' : ''}">${avatar}</div>
                         <span class="user-name ${isCurrentUser ? 'user-you' : ''}">${user}${isCurrentUser ? ' (Ty)' : ''}</span>
                     `;
                     
@@ -803,20 +814,58 @@
         document.addEventListener('DOMContentLoaded', () => {
             new ChatApp();
         });
-
-        // Responsive handling
-        function handleResize() {
-            const menuToggle = document.getElementById('menuToggle');
-            if (window.innerWidth <= 768) {
-                menuToggle.style.display = 'flex';
-            } else {
-                menuToggle.style.display = 'none';
-                document.getElementById('sidebar').classList.remove('open');
-            }
-        }
-
-        window.addEventListener('resize', handleResize);
-        handleResize();
     </script>
 </body>
-</html>
+</html>'''
+    
+    with open('web_client.html', 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    print("✅ Utworzono plik web_client.html")
+
+def main():
+    print("🔧 Quick Fix - naprawiam problemy...")
+    
+    # Problem 1: Napraw WebSocket Bridge
+    print("1. Naprawiam websocket_bridge.py...")
+    
+    # Sprawdź czy plik istnieje
+    if os.path.exists('websocket_bridge.py'):
+        # Przeczytaj plik
+        with open('websocket_bridge.py', 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Dodaj import time jeśli go nie ma
+        if 'import time' not in content:
+            content = content.replace(
+                'import threading\nimport sys',
+                'import threading\nimport time\nimport sys'
+            )
+            
+            # Zapisz poprawiony plik
+            with open('websocket_bridge.py', 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            print("   ✅ Dodano import time")
+        else:
+            print("   ✅ Import time już istnieje")
+    else:
+        print("   ❌ Nie znaleziono websocket_bridge.py")
+    
+    # Problem 2: Stwórz web_client.html
+    print("2. Tworzę web_client.html...")
+    
+    if not os.path.exists('web_client.html'):
+        create_web_client_html()
+    else:
+        print("   ✅ Plik web_client.html już istnieje")
+    
+    print("\n🎉 Wszystko naprawione!")
+    print("Teraz uruchom ponownie:")
+    print("1. python start_server.py")
+    print("2. python websocket_bridge.py") 
+    print("3. python llm_bot.py")
+    print("4. python start_web_server.py")
+
+if __name__ == "__main__":
+    main()
