@@ -155,7 +155,7 @@ def demo_encryption():
         print_warning("Moduł szyfrowania niedostępny - zainstaluj 'cryptography'")
         print("Uruchom: pip install cryptography")
 
-def main():
+def main(): 
     """Główna funkcja"""
     print_banner()
     
