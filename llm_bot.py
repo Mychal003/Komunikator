@@ -388,7 +388,7 @@ def main():
         return
     
     # Pobierz API key
-    api_key = "REMOVEDt6Ry0vwjZkSxtUvyqQEx8SQtYo_hE4_MiZ_v27-k1OOp1iqfCh0sfQO5AkL3_T3BlbkFJzjBKdNye74-BEhpXjNEgSn3XZzXi7WYGCAOrocUgazBM19o_xl0zoK-nFEhp-mMJgfuuvfqE4A"
+    api_key = "xxx"
     if not api_key:
         print("❌ API key jest wymagany!")
         return

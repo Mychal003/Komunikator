@@ -9,7 +9,7 @@ import websockets
 import json
 import socket
 import threading
-import time
+import time  # ✅ DODANO IMPORT
 import sys
 import os
 from typing import Dict, Set
@@ -280,19 +280,11 @@ class WebSocketBridge:
         """Konwertuje wiadomość TCP na format WebSocket"""
         msg_type = tcp_message.get('type', '')
         user = tcp_message.get('user', '')
-        content = tcp_message.get('content', '').strip()  # ✅ Usuń białe znaki
+        content = tcp_message.get('content', '')
         timestamp = tcp_message.get('timestamp', '')
         encrypted = tcp_message.get('encrypted', False)
         
-        # ✅ Filtruj puste wiadomości systemowe
-        if msg_type == MessageType.SYSTEM and not content:
-            return None  # Nie przekazuj pustych wiadomości systemowych
-        
         if msg_type == MessageType.MESSAGE:
-            # ✅ Filtruj puste wiadomości czatu
-            if not content:
-                return None
-                
             return {
                 'type': 'message',
                 'author': user,
@@ -301,13 +293,11 @@ class WebSocketBridge:
                 'encrypted': encrypted
             }
         elif msg_type == MessageType.SYSTEM:
-            # ✅ Tylko niepuste wiadomości systemowe
-            if content:
-                return {
-                    'type': 'system_message',
-                    'content': content,
-                    'timestamp': timestamp
-                }
+            return {
+                'type': 'system_message',
+                'content': content,
+                'timestamp': timestamp
+            }
         elif msg_type == MessageType.USER_LIST:
             try:
                 users = json.loads(content)
@@ -316,15 +306,20 @@ class WebSocketBridge:
                     'users': users
                 }
             except:
-                return None  # Błąd parsowania - nie przekazuj
-        elif msg_type == MessageType.ERROR:
-            if content:  # ✅ Tylko niepuste błędy
                 return {
-                    'type': 'error',
-                    'message': content
+                    'type': 'system_message',
+                    'content': 'Błąd parsowania listy użytkowników'
                 }
-        
-        return None  # Nie przekazuj nieznanych/pustych wiadomości
+        elif msg_type == MessageType.ERROR:
+            return {
+                'type': 'error',
+                'message': content
+            }
+        else:
+            return {
+                'type': 'unknown',
+                'content': content
+            }
 
     async def send_to_websocket(self, websocket, data):
         """Wysyła dane do WebSocket"""
@@ -444,10 +439,12 @@ class WebSocketBridge:
                 print("🔄 Próba ponownego połączenia TCP Bridge za 5 sekund...")
                 time.sleep(5)
 
-    async def broadcast_to_websockets(self, ws_message):
-        """Przekazuje wiadomość do wszystkich klientów WebSocket"""
-        if not self.websocket_clients or not ws_message:
+    async def broadcast_to_websockets(self, tcp_message):
+        """Przekazuje wiadomość TCP do wszystkich klientów WebSocket"""
+        if not self.websocket_clients:
             return
+            
+        ws_message = self.convert_tcp_to_websocket(tcp_message)
         
         # Wyślij do wszystkich połączonych WebSocket klientów
         disconnected = []

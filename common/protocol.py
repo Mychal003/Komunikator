@@ -43,10 +43,6 @@ class Protocol:
     @staticmethod
     def create_message(msg_type: str, user: str, content: str = "") -> str:
         """Tworzy wiadomość w formacie protokołu z opcjonalnym szyfrowaniem"""
-        # ✅ Filtruj puste wiadomości systemowe
-        if msg_type == MessageType.SYSTEM and not content.strip():
-            return ""  # Zwróć pustą wiadomość - nie będzie wysłana
-        
         # Szyfruj zawartość wiadomości jeśli włączone
         if Protocol.encryption_enabled and content and ENCRYPTION_AVAILABLE:
             if msg_type == MessageType.MESSAGE:
@@ -68,17 +64,7 @@ class Protocol:
         try:
             # Usuń znak końca linii
             clean_message = raw_message.strip()
-            
-            # ✅ Filtruj puste wiadomości
-            if not clean_message:
-                return None  # Zwróć None dla pustych wiadomości
-            
             message = json.loads(clean_message)
-            
-            # ✅ Filtruj wiadomości z pustym contentem (oprócz USER_LIST)
-            if message.get('type') != MessageType.USER_LIST:
-                if not message.get('content', '').strip():
-                    return None  # Zwróć None dla pustych wiadomości
             
             # Sprawdź czy wiadomość jest zaszyfrowana
             if message.get('encrypted', False) and Protocol.encryption_enabled and ENCRYPTION_AVAILABLE:
@@ -117,15 +103,12 @@ class Protocol:
     @staticmethod
     def create_system_message(content: str) -> str:
         """Tworzy wiadomość systemową (nigdy nie szyfrowaną)"""
-        # ✅ Nie twórz pustych wiadomości systemowych
-        if not content or not content.strip():
-            return ""  # Zwróć pustą wiadomość
-            
         message = {
             "type": MessageType.SYSTEM,
             "user": "system",
-            "content": content.strip(),  # ✅ Usuń białe znaki
+            "content": content,
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "encrypted": False  # Wiadomości systemowe nigdy nie są szyfrowane
         }
         return json.dumps(message) + "\n"
+    
