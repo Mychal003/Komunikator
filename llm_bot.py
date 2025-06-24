@@ -41,6 +41,7 @@ class AIBot:
         self.socket = None
         self.connected = False
         self.running = False
+        self.authenticated = False
         
         # OpenAI setup
         if not OPENAI_AVAILABLE:
@@ -55,33 +56,31 @@ class AIBot:
         
         # Konfiguracja bota
         self.config = {
-            'max_history': 20,  # Maksymalna liczba wiadomości w pamięci
-            'response_delay': 1.0,  # Opóźnienie przed odpowiedzią (sekundy)
-            'max_response_length': 400,  # Maksymalna długość odpowiedzi
-            'personality': 'helpful_assistant',  # Osobowość bota
-            'respond_to_mentions': True,  # Odpowiadaj gdy ktoś wspomni bota
-            'respond_to_questions': True,  # Odpowiadaj na pytania
-            'respond_probability': 0.3,  # Prawdopodobieństwo odpowiedzi na zwykłe wiadomości
+            'max_history': 10,  # Zmniejszona historia
+            'response_delay': 1.5,  # Zwiększone opóźnienie 
+            'max_response_length': 200,  # Krótsze odpowiedzi
+            'personality': 'helpful_assistant',
+            'respond_to_mentions': True,
+            'respond_to_questions': True,
+            'respond_probability': 0.2,  # Mniejsza częstotliwość
         }
         
-        # System prompt dla różnych osobowości
+        # System prompt dla osobowości
         self.personalities = {
             'helpful_assistant': {
                 'system_prompt': """Jesteś pomocnym asystentem AI w polskim czacie internetowym. 
-                Odpowiadaj krótko, przyjaźnie i po polsku. Używaj emoji gdy to stosowne. 
-                Pomagaj użytkownikom, odpowiadaj na pytania i bądź częścią społeczności.""",
-                'greeting': "Cześć! Jestem AI bot 🤖 Mogę pomóc w czacie!"
+                Odpowiadaj BARDZO krótko, max 1-2 zdania. Używaj emoji okazjonalnie. 
+                Bądź pomocny ale nie dominuj rozmowy.""",
+                'greeting': "Cześć! Jestem AI bot 🤖 Mogę pomóc!"
             },
             'funny_bot': {
-                'system_prompt': """Jesteś zabawnym botem w polskim czacie. Lubisz żarty, 
-                memy i rozmowy. Odpowiadaj z humorem, używaj emoji i bądź pozytywny. 
-                Czasem opowiedz żart lub ciekawostkę.""",
-                'greeting': "Hej! Jestem zabawny bot 😄 Gotowy na rozmowę i żarty!"
+                'system_prompt': """Jesteś zabawnym botem w polskim czacie. 
+                Odpowiadaj krótko z humorem. Max 1-2 zdania. Używaj emoji.""",
+                'greeting': "Hej! Jestem zabawny bot 😄 Gotowy na rozmowę!"
             },
             'technical_expert': {
                 'system_prompt': """Jesteś ekspertem technicznym w polskim czacie. 
-                Specjalizujesz się w programowaniu, technologii i rozwiązywaniu problemów. 
-                Odpowiadaj precyzyjnie ale przystępnie.""",
+                Odpowiadaj precyzyjnie ale krótko. Max 1-2 zdania na temat tech.""",
                 'greeting': "Witam! Jestem tech bot 💻 Pomogę z zagadnieniami technicznymi!"
             }
         }
@@ -122,12 +121,21 @@ class AIBot:
             receive_thread.daemon = True
             receive_thread.start()
             
-            # Przywitaj się w czacie
-            time.sleep(2)  # Poczekaj chwilę
-            greeting = self.personalities[self.config['personality']]['greeting']
-            self.send_message(greeting)
+            # Poczekaj na uwierzytelnienie
+            start_time = time.time()
+            while not self.authenticated and time.time() - start_time < 10:
+                time.sleep(0.1)
             
-            return True
+            if self.authenticated:
+                # Przywitaj się w czacie
+                time.sleep(2)
+                greeting = self.personalities[self.config['personality']]['greeting']
+                self.send_message(greeting)
+                print("✅ Bot uwierzytelniony i aktywny!")
+                return True
+            else:
+                print("❌ Bot nie został uwierzytelniony")
+                return False
             
         except Exception as e:
             print(f"❌ Błąd połączenia bota: {e}")
@@ -135,14 +143,23 @@ class AIBot:
 
     def receive_messages(self):
         """Odbiera wiadomości z serwera"""
+        buffer = ""
+        
         while self.running and self.connected:
             try:
+                self.socket.settimeout(60)
                 data = self.socket.recv(1024).decode('utf-8')
                 if not data:
                     break
                 
-                message = Protocol.parse_message(data)
-                self.process_message(message)
+                # Dodaj do bufora i przetwórz linie
+                buffer += data
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    if line.strip():
+                        message = Protocol.parse_message(line.strip())
+                        if message:
+                            self.process_message(message)
                 
             except socket.timeout:
                 continue
@@ -156,25 +173,169 @@ class AIBot:
         self.connected = False
         print("🔌 Bot rozłączony z serwera")
 
+    def receive_messages(self):
+        """Odbiera wiadomości z serwera z debugowaniem"""
+        buffer = ""
+        
+        while self.running and self.connected:
+            try:
+                self.socket.settimeout(5)  # Krótszy timeout dla debugowania
+                data = self.socket.recv(1024).decode('utf-8')
+                if not data:
+                    print("🔌 Serwer zamknął połączenie")
+                    break
+                
+                print(f"📥 RAW data: {repr(data)}")  # DEBUG: pokaż surowe dane
+                
+                # Dodaj do bufora i przetwórz linie
+                buffer += data
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    if line.strip():
+                        print(f"📨 Parsing line: {repr(line.strip())}")  # DEBUG
+                        message = Protocol.parse_message(line.strip())
+                        print(f"📋 Parsed message: {message}")  # DEBUG
+                        if message:
+                            self.process_message(message)
+                
+            except socket.timeout:
+                print("⏰ Socket timeout - bot czeka...")  # DEBUG
+                continue
+            except socket.error as e:
+                print(f"❌ Błąd odbierania wiadomości: {e}")
+                break
+            except Exception as e:
+                print(f"❌ Nieoczekiwany błąd: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        self.connected = False
+        print("🔌 Bot rozłączony z serwera")
+
     def process_message(self, message: Dict):
-        """Przetwarza otrzymaną wiadomość"""
+        """Przetwarza otrzymaną wiadomość z debugowaniem"""
         msg_type = message.get('type', '')
         user = message.get('user', '')
         content = message.get('content', '')
         timestamp = message.get('timestamp', '')
         
-        # Ignoruj własne wiadomości i wiadomości systemowe
-        if user == self.bot_name or msg_type != MessageType.MESSAGE:
+        print(f"🔍 Processing: type={msg_type}, user={user}, content={content[:50]}...")  # DEBUG
+        
+        # Sprawdź uwierzytelnienie - rozszerzone warunki
+        if msg_type == MessageType.SYSTEM:
+            print(f"🔔 System message: {content}")
+            if any(keyword in content for keyword in ["Witaj", "witaj", "Welcome", "welcome", self.bot_name]):
+                self.authenticated = True
+                print("✅ Bot uwierzytelniony przez system message!")
+                return
+        
+        # Sprawdź czy otrzymaliśmy USER_LIST (oznacza że jesteśmy na liście)
+        if msg_type == MessageType.USER_LIST:
+            print(f"👥 User list received: {content}")
+            try:
+                users = json.loads(content) if content.startswith('[') else content.split(',')
+                if self.bot_name in users or any(self.bot_name in user for user in users):
+                    self.authenticated = True
+                    print("✅ Bot uwierzytelniony przez user list!")
+                    return
+            except Exception as e:
+                print(f"❌ Error parsing user list: {e}")
+        
+        # Jeśli nie jesteśmy jeszcze uwierzytelnieni, ale otrzymujemy zwykłe wiadomości
+        # to prawdopodobnie uwierzytelnienie przeszło
+        if not self.authenticated and msg_type == MessageType.MESSAGE and user != self.bot_name:
+            print("🤔 Receiving messages from others - assuming authenticated")
+            self.authenticated = True
+        
+        # Ignoruj własne wiadomości i przetwarzaj tylko po uwierzytelnieniu
+        if user == self.bot_name:
+            print(f"🤖 Ignoring own message: {content[:30]}...")
             return
+            
+        if msg_type != MessageType.MESSAGE or not content.strip():
+            print(f"🔇 Ignoring non-message: type={msg_type}")
+            return
+        
+        if not self.authenticated:
+            print("⚠️ Not authenticated yet, ignoring message")
+            return
+        
+        print(f"📨 Processing user message: {user}: {content[:50]}...")
         
         # Dodaj do historii konwersacji
         self.add_to_history(user, content, timestamp)
         
         # Sprawdź czy bot powinien odpowiedzieć
         if self.should_respond(user, content):
+            print(f"🤔 Bot will respond to: {content[:30]}...")
             # Dodaj opóźnienie dla naturalności
             delay = self.config['response_delay']
             threading.Timer(delay, self.generate_and_send_response, [user, content]).start()
+        else:
+            print(f"🔇 Bot will not respond to: {content[:30]}...")
+
+    def connect_to_server(self) -> bool:
+        """Łączy bota z serwerem TCP z lepszym debugowaniem"""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(30)
+            self.socket.connect((self.server_host, self.server_port))
+            print(f"🔗 Socket connected to {self.server_host}:{self.server_port}")
+            
+            # Włącz szyfrowanie jeśli dostępne
+            try:
+                from common.encryption import is_encryption_available
+                if is_encryption_available():
+                    encryption_password = "komunikator_secure_2025"
+                    Protocol.enable_encryption(encryption_password)
+                    print("🔒 Szyfrowanie włączone dla bota")
+            except ImportError:
+                print("⚠️ Szyfrowanie niedostępne dla bota")
+            
+            # Wyślij wiadomość JOIN
+            join_message = Protocol.create_message(MessageType.JOIN, self.bot_name)
+            print(f"📤 Sending JOIN: {repr(join_message)}")  # DEBUG
+            self.socket.send(join_message.encode('utf-8'))
+            
+            self.connected = True
+            self.running = True
+            
+            print(f"✅ Bot connected as {self.bot_name}")
+            
+            # Uruchom wątek odbierający wiadomości
+            receive_thread = threading.Thread(target=self.receive_messages)
+            receive_thread.daemon = True
+            receive_thread.start()
+            
+            # Poczekaj na uwierzytelnienie z dłuższym timeoutem
+            print("⏳ Waiting for authentication...")
+            start_time = time.time()
+            while not self.authenticated and time.time() - start_time < 15:  # 15 sekund
+                time.sleep(0.2)
+                if time.time() - start_time > 5:
+                    # Po 5 sekundach załóż że już jesteśmy uwierzytelnieni
+                    print("🤔 No explicit auth received, assuming connected...")
+                    self.authenticated = True
+                    break
+            
+            if self.authenticated:
+                # Poczekaj chwilę i wyślij przywitanie
+                time.sleep(2)
+                greeting = self.personalities[self.config['personality']]['greeting']
+                print(f"📤 Sending greeting: {greeting}")
+                self.send_message(greeting)
+                print("✅ Bot authenticated and active!")
+                return True
+            else:
+                print("❌ Bot authentication timeout")
+                return False
+            
+        except Exception as e:
+            print(f"❌ Connection error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     def should_respond(self, user: str, content: str) -> bool:
         """Określa czy bot powinien odpowiedzieć na wiadomość"""
@@ -182,24 +343,32 @@ class AIBot:
         
         # Zawsze odpowiadaj gdy ktoś wspomni bota
         if self.config['respond_to_mentions']:
-            bot_mentions = [self.bot_name.lower(), 'bot', 'ai', '🤖']
+            bot_mentions = [self.bot_name.lower(), 'bot', 'ai', '🤖', '@' + self.bot_name.lower()]
             if any(mention in content_lower for mention in bot_mentions):
+                print(f"🎯 Wykryto wzmiankę o bocie w: {content}")
                 return True
         
-        # Odpowiadaj na pytania
+        # Odpowiadaj na bezpośrednie pytania
         if self.config['respond_to_questions']:
-            question_indicators = ['?', 'jak', 'dlaczego', 'co', 'gdzie', 'kiedy', 'czy', 'help', 'pomoc']
+            if content.strip().endswith('?'):
+                print(f"❓ Wykryto pytanie: {content}")
+                return True
+            
+            question_indicators = ['jak', 'dlaczego', 'co to', 'gdzie', 'kiedy', 'czy', 'help', 'pomoc']
             if any(indicator in content_lower for indicator in question_indicators):
+                print(f"❓ Wykryto wskaźnik pytania: {content}")
                 return True
         
-        # Odpowiadaj na pozdrowienia
-        greetings = ['cześć', 'hej', 'siema', 'witaj', 'hello', 'hi']
-        if any(greeting in content_lower for greeting in greetings):
-            return True
+        # Odpowiadaj na pozdrowienia skierowane do bota
+        if any(greeting in content_lower for greeting in ['cześć', 'hej', 'siema', 'witaj', 'hello', 'hi']):
+            if self.bot_name.lower() in content_lower or 'bot' in content_lower:
+                print(f"👋 Wykryto pozdrowienie dla bota: {content}")
+                return True
         
-        # Losowo odpowiadaj na inne wiadomości
+        # Losowo odpowiadaj na inne wiadomości (bardzo rzadko)
         import random
         if random.random() < self.config['respond_probability']:
+            print(f"🎲 Losowa odpowiedź na: {content}")
             return True
         
         return False
@@ -222,7 +391,7 @@ class AIBot:
             self.user_contexts[user] = []
         
         self.user_contexts[user].append(message_entry)
-        if len(self.user_contexts[user]) > 10:  # Maksymalnie 10 wiadomości per użytkownik
+        if len(self.user_contexts[user]) > 5:  # Max 5 wiadomości per user
             self.user_contexts[user].pop(0)
         
         self.last_message_time[user] = datetime.now()
@@ -230,6 +399,8 @@ class AIBot:
     def generate_and_send_response(self, user: str, content: str):
         """Generuje odpowiedź AI i wysyła ją"""
         try:
+            print(f"🧠 Generuję odpowiedź dla {user}...")
+            
             # Przygotuj kontekst
             context = self.prepare_context(user, content)
             
@@ -241,19 +412,21 @@ class AIBot:
                 if len(response) > self.config['max_response_length']:
                     response = response[:self.config['max_response_length']] + "..."
                 
-                # Dodaj prefix dla odpowiedzi na konkretną osobę
-                if user in content or any(mention in content.lower() for mention in [self.bot_name.lower(), 'bot']):
-                    response = f"@{user} {response}"
+                # Usuń potencjalne powtórzenia nicku
+                if response.startswith(f"@{user}"):
+                    response = response[len(f"@{user}"):].strip()
                 
                 self.send_message(response)
-                print(f"🤖 Odpowiedź dla {user}: {response[:50]}...")
-            
+                print(f"✅ Wysłano odpowiedź: {response[:50]}...")
+            else:
+                print("❌ Nie udało się wygenerować odpowiedzi")
+                
         except Exception as e:
             print(f"❌ Błąd generowania odpowiedzi: {e}")
             # Fallback response
             fallback_responses = [
                 "Przepraszam, mam problem z odpowiedzią 😅",
-                "Hmm, nie jestem pewien jak odpowiedzieć 🤔",
+                "Hmm, nie jestem pewien 🤔",
                 "Spróbuj zapytać ponownie 🔄"
             ]
             import random
@@ -264,30 +437,20 @@ class AIBot:
         """Przygotowuje kontekst dla AI"""
         personality = self.personalities[self.config['personality']]
         
-        # Historia ostatnich wiadomości
+        # Historia ostatnich wiadomości (max 3)
         recent_history = ""
-        for msg in self.conversation_history[-5:]:  # Ostatnie 5 wiadomości
+        for msg in self.conversation_history[-3:]:
             recent_history += f"{msg['user']}: {msg['content']}\n"
-        
-        # Kontekst użytkownika
-        user_context = ""
-        if user in self.user_contexts:
-            user_msgs = self.user_contexts[user][-3:]  # Ostatnie 3 wiadomości użytkownika
-            for msg in user_msgs:
-                user_context += f"{msg['content']}\n"
         
         context = f"""
 {personality['system_prompt']}
 
-Ostatnia historia czatu:
+Ostatnie wiadomości w czacie:
 {recent_history}
 
-Ostatnie wiadomości od {user}:
-{user_context}
+Użytkownik {user} napisał: {content}
 
-Aktualna wiadomość od {user}: {content}
-
-Odpowiedz krótko i naturalnie po polsku. Maksymalnie 2-3 zdania.
+Odpowiedz naturalnie PO POLSKU. Max 1-2 zdania. Nie powtarzaj nicku użytkownika.
 """
         return context
 
@@ -299,7 +462,7 @@ Odpowiedz krótko i naturalnie po polsku. Maksymalnie 2-3 zdania.
                 messages=[
                     {"role": "user", "content": context}
                 ],
-                max_tokens=150,
+                max_tokens=80,  # Bardzo krótkie odpowiedzi
                 temperature=0.7,
                 frequency_penalty=0.5,
                 presence_penalty=0.3
@@ -322,17 +485,6 @@ Odpowiedz krótko i naturalnie po polsku. Maksymalnie 2-3 zdania.
         except Exception as e:
             print(f"❌ Błąd wysyłania wiadomości: {e}")
 
-    def send_command(self, command: str):
-        """Wysyła komendę do serwera"""
-        if not self.connected:
-            return
-        
-        try:
-            message = Protocol.create_message(MessageType.MESSAGE, self.bot_name, command)
-            self.socket.send(message.encode('utf-8'))
-        except Exception as e:
-            print(f"❌ Błąd wysyłania komendy: {e}")
-
     def change_personality(self, personality: str):
         """Zmienia osobowość bota"""
         if personality in self.personalities:
@@ -348,6 +500,7 @@ Odpowiedz krótko i naturalnie po polsku. Maksymalnie 2-3 zdania.
         """Zwraca statystyki bota"""
         return {
             'connected': self.connected,
+            'authenticated': self.authenticated,
             'total_conversations': len(self.conversation_history),
             'unique_users': len(self.user_contexts),
             'personality': self.config['personality'],
@@ -388,7 +541,7 @@ def main():
         return
     
     # Pobierz API key
-    api_key = "xxx"
+    api_key = input("🔑 Wprowadź OpenAI API key: ").strip()
     if not api_key:
         print("❌ API key jest wymagany!")
         return
@@ -402,7 +555,7 @@ def main():
         print(f"   {i}. {p}")
     
     try:
-        choice = int(input("Wybierz osobowość (1-3): ")) - 1
+        choice = int(input("Wybierz osobowość (1-3, Enter=1): ") or "1") - 1
         personality = personalities[choice] if 0 <= choice < len(personalities) else 'helpful_assistant'
     except:
         personality = 'helpful_assistant'
@@ -422,6 +575,7 @@ def main():
             print("   'stats' - pokaż statystyki")
             print("   'personality <nazwa>' - zmień osobowość")
             print("   'quit' - zakończ bota")
+            print("Teraz bot nasłuchuje i będzie odpowiadać w czacie...")
             print()
             
             # Pętla komend
