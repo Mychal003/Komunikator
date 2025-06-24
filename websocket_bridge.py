@@ -9,16 +9,21 @@ import websockets
 import json
 import socket
 import threading
-import time  # ✅ DODANO IMPORT
+import time
 import sys
 import os
 from typing import Dict, Set
+import concurrent.futures
 
 # Dodaj ścieżkę do common
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from common.protocol import Protocol, MessageType
 from common.utils import validate_nick, validate_message
+
+# Debug informacje o wersji
+print(f"🔍 Wersja websockets: {websockets.__version__}")
+print(f"🔍 Wersja Python: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
 
 class WebSocketBridge:
     def __init__(self, tcp_host='localhost', tcp_port=12345, ws_port=8765):
@@ -29,21 +34,25 @@ class WebSocketBridge:
         # WebSocket połączenia {websocket: client_info}
         self.websocket_clients: Dict[websockets.WebSocketServerProtocol, dict] = {}
         
-        # TCP połączenia {nick: tcp_socket}
-        self.tcp_connections: Dict[str, socket.socket] = {}
+        # TCP połączenia {nick: websocket}
+        self.tcp_connections: Dict[str, websockets.WebSocketServerProtocol] = {}
         
-        # Bridge TCP connection - pojedyncze połączenie do serwera dla przekazywania wiadomości
+        # Bridge TCP connection
         self.bridge_socket = None
         self.bridge_connected = False
         self.bridge_nick = "🌉WebBridge"
+        
+        # Event loop dla komunikacji między wątkami
+        self.main_loop = None
+        self.shutdown_event = threading.Event()
         
         print(f"🌐 WebSocket Bridge uruchamiany...")
         print(f"   WebSocket serwer: ws://localhost:{ws_port}")
         print(f"   TCP serwer: {tcp_host}:{tcp_port}")
         print(f"   Bridge obsługuje TCP boty: ✅")
 
-    async def handle_websocket_connection(self, websocket):
-        """Obsługuje nowe połączenie WebSocket"""
+    async def handle_websocket_connection(self, websocket, path=None):
+        """Obsługuje nowe połączenie WebSocket - kompatybilne z różnymi wersjami biblioteki"""
         client_ip = websocket.remote_address[0]
         print(f"🔗 Nowe połączenie WebSocket z {client_ip}")
         
@@ -51,7 +60,6 @@ class WebSocketBridge:
         self.websocket_clients[websocket] = {
             'ip': client_ip,
             'nick': None,
-            'tcp_socket': None,
             'connected': False
         }
         
@@ -68,8 +76,10 @@ class WebSocketBridge:
                 
         except websockets.exceptions.ConnectionClosed:
             print(f"🔌 Połączenie WebSocket z {client_ip} zamknięte")
+        except websockets.exceptions.InvalidMessage:
+            print(f"❌ Nieprawidłowa wiadomość WebSocket z {client_ip}")
         except Exception as e:
-            print(f"❌ Błąd WebSocket: {e}")
+            print(f"❌ Błąd WebSocket z {client_ip}: {e}")
         finally:
             await self.cleanup_websocket_client(websocket)
 
@@ -138,15 +148,16 @@ class WebSocketBridge:
         try:
             # Wyślij JOIN message przez TCP Bridge
             join_message = Protocol.create_message(MessageType.JOIN, nick)
-            self.bridge_socket.send(join_message.encode('utf-8'))
+            if join_message and join_message.strip():
+                self.bridge_socket.send(join_message.encode('utf-8'))
             
             # Zaktualizuj informacje o kliencie WebSocket
             client_info = self.websocket_clients[websocket]
             client_info['nick'] = nick
             client_info['connected'] = True
             
-            # Dodaj do rejestru (nie potrzebujemy osobnego TCP socketa)
-            self.tcp_connections[nick] = websocket  # Używamy WebSocket jako identyfikator
+            # Dodaj do rejestru
+            self.tcp_connections[nick] = websocket
             
             # Powiadom WebSocket o sukcesie
             await self.send_to_websocket(websocket, {
@@ -179,7 +190,8 @@ class WebSocketBridge:
             try:
                 # Wyślij LEAVE message przez TCP Bridge
                 leave_message = Protocol.create_message(MessageType.LEAVE, nick)
-                self.bridge_socket.send(leave_message.encode('utf-8'))
+                if leave_message and leave_message.strip():
+                    self.bridge_socket.send(leave_message.encode('utf-8'))
             except:
                 pass
             
@@ -219,10 +231,11 @@ class WebSocketBridge:
             return
         
         try:
-            # Wyślij wiadomość przez TCP Bridge zamiast indywidualnego połączenia
+            # Wyślij wiadomość przez TCP Bridge
             if self.bridge_connected and self.bridge_socket:
                 chat_message = Protocol.create_message(MessageType.MESSAGE, nick, content)
-                self.bridge_socket.send(chat_message.encode('utf-8'))
+                if chat_message and chat_message.strip():
+                    self.bridge_socket.send(chat_message.encode('utf-8'))
             else:
                 await self.send_to_websocket(websocket, {
                     'type': 'error',
@@ -236,55 +249,29 @@ class WebSocketBridge:
             })
             await self.handle_disconnect_request(websocket)
 
-    def tcp_receive_loop(self, websocket, tcp_socket, nick):
-        """Pętla odbierająca wiadomości z TCP serwera (w osobnym wątku)"""
-        try:
-            while True:
-                tcp_socket.settimeout(60)
-                data = tcp_socket.recv(1024).decode('utf-8')
-                if not data:
-                    break
-                
-                # Parsuj wiadomość TCP
-                message = Protocol.parse_message(data)
-                
-                # Konwertuj na format WebSocket
-                ws_message = self.convert_tcp_to_websocket(message)
-                
-                # Wyślij do WebSocket (asyncio.run_coroutine_threadsafe dla thread safety)
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.send_to_websocket(websocket, ws_message))
-                loop.close()
-                
-        except socket.timeout:
-            print(f"⏰ Timeout TCP dla {nick}")
-        except socket.error as e:
-            print(f"❌ Błąd TCP dla {nick}: {e}")
-        except Exception as e:
-            print(f"❌ Nieoczekiwany błąd TCP dla {nick}: {e}")
-        finally:
-            # Powiadom WebSocket o rozłączeniu
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.send_to_websocket(websocket, {
-                    'type': 'tcp_disconnected',
-                    'message': 'Połączenie z serwerem zostało przerwane'
-                }))
-                loop.close()
-            except:
-                pass
-
     def convert_tcp_to_websocket(self, tcp_message):
         """Konwertuje wiadomość TCP na format WebSocket"""
+        if tcp_message is None:
+            return None
+            
         msg_type = tcp_message.get('type', '')
         user = tcp_message.get('user', '')
-        content = tcp_message.get('content', '')
+        content = tcp_message.get('content', '').strip()
         timestamp = tcp_message.get('timestamp', '')
         encrypted = tcp_message.get('encrypted', False)
         
+        # ✅ IGNORUJ wiadomości od Bridge'a
+        if user == self.bridge_nick:
+            return None
+        
+        # Filtruj puste wiadomości systemowe
+        if msg_type == MessageType.SYSTEM and not content:
+            return None
+        
         if msg_type == MessageType.MESSAGE:
+            if not content:
+                return None
+                
             return {
                 'type': 'message',
                 'author': user,
@@ -292,103 +279,169 @@ class WebSocketBridge:
                 'timestamp': timestamp,
                 'encrypted': encrypted
             }
+            
         elif msg_type == MessageType.SYSTEM:
-            return {
-                'type': 'system_message',
-                'content': content,
-                'timestamp': timestamp
-            }
+            if content:
+                return {
+                    'type': 'system_message',
+                    'content': content,
+                    'timestamp': timestamp
+                }
+                
         elif msg_type == MessageType.USER_LIST:
             try:
                 users = json.loads(content)
+                # ✅ Usuń bridge z listy użytkowników
+                if self.bridge_nick in users:
+                    users.remove(self.bridge_nick)
                 return {
                     'type': 'users_list',
                     'users': users
                 }
             except:
-                return {
-                    'type': 'system_message',
-                    'content': 'Błąd parsowania listy użytkowników'
-                }
+                return None
+                
         elif msg_type == MessageType.ERROR:
-            return {
-                'type': 'error',
-                'message': content
-            }
-        else:
-            return {
-                'type': 'unknown',
-                'content': content
-            }
+            if content:
+                return {
+                    'type': 'error',
+                    'message': content
+                }
+        
+        # ✅ KLUCZOWA ZMIANA: Ignoruj nieznane typy zamiast zwracać error
+        return None
 
     async def send_to_websocket(self, websocket, data):
         """Wysyła dane do WebSocket"""
         try:
             if websocket in self.websocket_clients:
+                # Sprawdź stan połączenia w sposób kompatybilny z różnymi wersjami
+                try:
+                    # Dla nowszych wersji websockets
+                    if hasattr(websocket, 'state') and websocket.state.name != 'OPEN':
+                        return
+                    # Dla starszych wersji websockets
+                    elif hasattr(websocket, 'closed') and websocket.closed:
+                        return
+                except:
+                    pass  # Jeśli sprawdzenie stanu się nie powiedzie, spróbuj wysłać
+                
                 await websocket.send(json.dumps(data))
         except websockets.exceptions.ConnectionClosed:
             pass
         except Exception as e:
             print(f"❌ Błąd wysyłania do WebSocket: {e}")
+            # Usuń problematyczne połączenie
+            if websocket in self.websocket_clients:
+                del self.websocket_clients[websocket]
 
     async def cleanup_websocket_client(self, websocket):
         """Czyści zasoby po rozłączeniu WebSocket"""
         if websocket in self.websocket_clients:
             client_info = self.websocket_clients[websocket]
             nick = client_info.get('nick')
-            tcp_socket = client_info.get('tcp_socket')
-            
-            # Zamknij TCP połączenie
-            if tcp_socket:
-                try:
-                    if nick:
-                        leave_message = Protocol.create_message(MessageType.LEAVE, nick)
-                        tcp_socket.send(leave_message.encode('utf-8'))
-                except:
-                    pass
-                try:
-                    tcp_socket.close()
-                except:
-                    pass
             
             # Usuń z rejestrów
             if nick and nick in self.tcp_connections:
                 del self.tcp_connections[nick]
+                
+                # Wyślij LEAVE message przez bridge
+                if self.bridge_connected:
+                    try:
+                        leave_message = Protocol.create_message(MessageType.LEAVE, nick)
+                        if leave_message and leave_message.strip():
+                            self.bridge_socket.send(leave_message.encode('utf-8'))
+                    except:
+                        pass
             
             del self.websocket_clients[websocket]
             
             if nick:
                 print(f"🧹 Wyczyszczono zasoby dla {nick}")
 
+    def schedule_websocket_broadcast(self, ws_message):
+        """Planuje wysłanie wiadomości do WebSocket klientów z głównego event loop"""
+        if self.main_loop and not self.main_loop.is_closed():
+            # Użyj call_soon_threadsafe aby bezpiecznie zaplanować task
+            future = asyncio.run_coroutine_threadsafe(
+                self.broadcast_to_websockets(ws_message), 
+                self.main_loop
+            )
+            try:
+                # Czekaj maksymalnie 1 sekundę na wykonanie
+                future.result(timeout=1.0)
+            except concurrent.futures.TimeoutError:
+                print("⚠️ Timeout podczas wysyłania do WebSocket klientów")
+            except Exception as e:
+                print(f"❌ Błąd wysyłania do WebSocket klientów: {e}")
+
     async def start_server(self):
         """Uruchamia WebSocket serwer"""
         print(f"🚀 Uruchamianie WebSocket serwera na porcie {self.ws_port}...")
+        
+        # Zapisz główny event loop
+        self.main_loop = asyncio.get_event_loop()
         
         # Uruchom bridge TCP connection w osobnym wątku
         bridge_thread = threading.Thread(target=self.start_tcp_bridge)
         bridge_thread.daemon = True
         bridge_thread.start()
         
-        server = await websockets.serve(
-            self.handle_websocket_connection,
-            "localhost",
-            self.ws_port
-        )
+        # Obsługa połączeń WebSocket - kompatybilna z różnymi wersjami biblioteki
+        async def connection_handler(websocket, path=None):
+            try:
+                await self.handle_websocket_connection(websocket, path)
+            except websockets.exceptions.InvalidMessage as e:
+                print(f"❌ Nieprawidłowa wiadomość WebSocket: {e}")
+            except Exception as e:
+                print(f"❌ Błąd obsługi WebSocket: {e}")
         
-        print(f"✅ WebSocket Bridge gotowy!")
-        print(f"   Otwórz przeglądarkę: http://localhost:8000")
-        print(f"   WebSocket endpoint: ws://localhost:{self.ws_port}")
-        print(f"   TCP Bridge: {'✅ Połączony' if self.bridge_connected else '❌ Rozłączony'}")
-        
-        await server.wait_closed()
+        try:
+            # Bezpośrednie użycie metody klasy jako handler
+            server = await websockets.serve(
+                self.handle_websocket_connection,
+                "localhost",
+                self.ws_port,
+                ping_interval=30,
+                ping_timeout=10,
+                close_timeout=10
+            )
+            
+            print(f"✅ WebSocket Bridge gotowy!")
+            print(f"   Otwórz przeglądarkę: http://localhost:8000")
+            print(f"   WebSocket endpoint: ws://localhost:{self.ws_port}")
+            print(f"   TCP Bridge: {'✅ Połączony' if self.bridge_connected else '❌ Rozłączony'}")
+            
+            # Czekaj na zakończenie
+            await server.wait_closed()
+            
+        except KeyboardInterrupt:
+            print("\n🛑 Otrzymano sygnał przerwania...")
+        finally:
+            # Sygnalizuj zakończenie
+            self.shutdown_event.set()
+            
+            # Zakończ TCP bridge
+            self.bridge_connected = False
+            if self.bridge_socket:
+                try:
+                    self.bridge_socket.close()
+                except:
+                    pass
+            
+            # Statystyki końcowe
+            print("📊 Statystyki końcowe:")
+            print(f"   WebSocket klientów: {len(self.websocket_clients)}")
+            print(f"   TCP połączeń: {len(self.tcp_connections)}")
+            print(f"   Połączeni użytkownicy: {list(self.tcp_connections.keys())}")
 
     def start_tcp_bridge(self):
         """Uruchamia TCP bridge connection w osobnym wątku"""
-        while True:
+        while not self.shutdown_event.is_set():
             try:
                 print(f"🌉 Łączenie TCP Bridge z serwerem...")
                 self.bridge_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.bridge_socket.settimeout(30)
+                self.bridge_socket.settimeout(5)  # Krótszy timeout dla szybszego wykrywania błędów
                 self.bridge_socket.connect((self.tcp_host, self.tcp_port))
                 
                 # Włącz szyfrowanie jeśli dostępne
@@ -403,14 +456,16 @@ class WebSocketBridge:
                 
                 # Wyślij JOIN message dla bridge
                 join_message = Protocol.create_message(MessageType.JOIN, self.bridge_nick)
-                self.bridge_socket.send(join_message.encode('utf-8'))
+                if join_message and join_message.strip():
+                    self.bridge_socket.send(join_message.encode('utf-8'))
                 
                 self.bridge_connected = True
                 print(f"✅ TCP Bridge połączony jako {self.bridge_nick}")
                 
                 # Pętla odbierania wiadomości z TCP serwera
-                while self.bridge_connected:
+                while self.bridge_connected and not self.shutdown_event.is_set():
                     try:
+                        self.bridge_socket.settimeout(1)  # Krótki timeout dla sprawdzania shutdown
                         data = self.bridge_socket.recv(1024).decode('utf-8')
                         if not data:
                             break
@@ -418,11 +473,16 @@ class WebSocketBridge:
                         message = Protocol.parse_message(data)
                         
                         # Przekaż wiadomość do wszystkich WebSocket klientów
-                        if message.get('user') != self.bridge_nick:  # Nie przekazuj własnych wiadomości
-                            asyncio.run(self.broadcast_to_websockets(message))
+                        if message and message.get('user') != self.bridge_nick:
+                            ws_message = self.convert_tcp_to_websocket(message)
+                            if ws_message:
+                                print(f"📤 Przekazuję do WebSocket: {ws_message['type']} od {ws_message.get('author', 'system')}")
+                                self.schedule_websocket_broadcast(ws_message)
+                            else:
+                                    print(f"🔇 Pomijam wiadomość TCP: {message.get('type')} od {message.get('user')}")
                             
                     except socket.timeout:
-                        continue
+                        continue  # Sprawdź shutdown_event i kontynuuj
                     except socket.error as e:
                         print(f"❌ Błąd TCP Bridge: {e}")
                         break
@@ -434,23 +494,34 @@ class WebSocketBridge:
                 print(f"❌ Błąd TCP Bridge: {e}")
                 self.bridge_connected = False
                 
-            # Próba ponownego połączenia po 5 sekundach
-            if not self.bridge_connected:
+            # Próba ponownego połączenia po 5 sekundach (jeśli nie shutdown)
+            if not self.bridge_connected and not self.shutdown_event.is_set():
                 print("🔄 Próba ponownego połączenia TCP Bridge za 5 sekund...")
-                time.sleep(5)
+                self.shutdown_event.wait(5)  # Przerywalny sleep
 
-    async def broadcast_to_websockets(self, tcp_message):
-        """Przekazuje wiadomość TCP do wszystkich klientów WebSocket"""
-        if not self.websocket_clients:
+    async def broadcast_to_websockets(self, ws_message):
+        """Przekazuje wiadomość do wszystkich klientów WebSocket"""
+        if not self.websocket_clients or not ws_message:
             return
-            
-        ws_message = self.convert_tcp_to_websocket(tcp_message)
         
         # Wyślij do wszystkich połączonych WebSocket klientów
         disconnected = []
-        for websocket in self.websocket_clients:
+        for websocket in list(self.websocket_clients.keys()):
             try:
-                await websocket.send(json.dumps(ws_message))
+                # Sprawdź stan połączenia w sposób kompatybilny
+                connection_ok = True
+                try:
+                    if hasattr(websocket, 'state') and websocket.state.name != 'OPEN':
+                        connection_ok = False
+                    elif hasattr(websocket, 'closed') and websocket.closed:
+                        connection_ok = False
+                except:
+                    pass  # Jeśli sprawdzenie się nie powiedzie, spróbuj wysłać
+                
+                if connection_ok:
+                    await websocket.send(json.dumps(ws_message))
+                else:
+                    disconnected.append(websocket)
             except websockets.exceptions.ConnectionClosed:
                 disconnected.append(websocket)
             except Exception as e:

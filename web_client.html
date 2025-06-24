@@ -1,13 +1,4 @@
-#!/usr/bin/env python3
-"""
-Quick fix - naprawia importy i tworzy brakujące pliki
-"""
-
-import os
-
-def create_web_client_html():
-    """Tworzy plik web_client.html"""
-    html_content = '''<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
@@ -816,56 +807,4 @@ def create_web_client_html():
         });
     </script>
 </body>
-</html>'''
-    
-    with open('web_client.html', 'w', encoding='utf-8') as f:
-        f.write(html_content)
-    
-    print("✅ Utworzono plik web_client.html")
-
-def main():
-    print("🔧 Quick Fix - naprawiam problemy...")
-    
-    # Problem 1: Napraw WebSocket Bridge
-    print("1. Naprawiam websocket_bridge.py...")
-    
-    # Sprawdź czy plik istnieje
-    if os.path.exists('websocket_bridge.py'):
-        # Przeczytaj plik
-        with open('websocket_bridge.py', 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Dodaj import time jeśli go nie ma
-        if 'import time' not in content:
-            content = content.replace(
-                'import threading\nimport sys',
-                'import threading\nimport time\nimport sys'
-            )
-            
-            # Zapisz poprawiony plik
-            with open('websocket_bridge.py', 'w', encoding='utf-8') as f:
-                f.write(content)
-            
-            print("   ✅ Dodano import time")
-        else:
-            print("   ✅ Import time już istnieje")
-    else:
-        print("   ❌ Nie znaleziono websocket_bridge.py")
-    
-    # Problem 2: Stwórz web_client.html
-    print("2. Tworzę web_client.html...")
-    
-    if not os.path.exists('web_client.html'):
-        create_web_client_html()
-    else:
-        print("   ✅ Plik web_client.html już istnieje")
-    
-    print("\n🎉 Wszystko naprawione!")
-    print("Teraz uruchom ponownie:")
-    print("1. python start_server.py")
-    print("2. python websocket_bridge.py") 
-    print("3. python llm_bot.py")
-    print("4. python start_web_server.py")
-
-if __name__ == "__main__":
-    main()
+</html>

@@ -196,7 +196,7 @@ class ChatServer:
         self.log(f"   📈 Wiadomości/godz: {current_stats['messages_per_hour']}", 'info')
     
     def add_client(self, nick: str, client_handler):
-        """Dodaje klienta do listy aktywnych"""
+        """Dodaje klienta do listy aktywnych - ZAKTUALIZOWANA WERSJA"""
         with self.clients_lock:
             if nick in self.clients:
                 return False  # Nick zajęty
@@ -218,16 +218,14 @@ class ChatServer:
         join_message = Protocol.create_system_message(f"{nick} dołączył do czatu")
         self.broadcast_message(join_message, exclude_user=nick)
         
-        # Wyślij listę użytkowników do nowego klienta
-        user_list = list(self.clients.keys())
-        list_message = Protocol.create_user_list_message(user_list)
-        client_handler.send_message(list_message)
+        # WAŻNE: Wyślij aktualną listę użytkowników do WSZYSTKICH klientów
+        self.broadcast_user_list()
         
         self.log(f"✅ {nick} dołączył. Aktywni: {len(self.clients)}", 'success')
         return True
     
     def remove_client(self, nick: str):
-        """Usuwa klienta z listy aktywnych"""
+        """Usuwa klienta z listy aktywnych - ZAKTUALIZOWANA WERSJA"""
         with self.clients_lock:
             if nick in self.clients:
                 del self.clients[nick]
@@ -238,6 +236,9 @@ class ChatServer:
         # Powiadom pozostałych o odejściu
         leave_message = Protocol.create_system_message(f"{nick} opuścił czat")
         self.broadcast_message(leave_message)
+        
+        # WAŻNE: Wyślij aktualną listę użytkowników do WSZYSTKICH klientów
+        self.broadcast_user_list()
         
         self.log(f"👋 {nick} opuścił czat. Aktywni: {len(self.clients)}", 'info')
     
@@ -436,6 +437,73 @@ class ChatServer:
             print(colored.cyan("="*60))
         
         self.log("🛑 Serwer wyłączony", 'success')
+
+    def broadcast_user_list(self):
+        """Wysyła aktualną listę użytkowników do wszystkich klientów"""
+        with self.clients_lock:
+            user_list = list(self.clients.keys())
+        
+        if user_list:  # Tylko jeśli są jakiś użytkownicy
+            user_list_message = Protocol.create_user_list_message(user_list)
+            
+            # Wyślij do wszystkich klientów
+            with self.clients_lock:
+                disconnected_clients = []
+                for nick, client_handler in self.clients.items():
+                    if not client_handler.send_message(user_list_message):
+                        disconnected_clients.append(nick)
+                
+                # Usuń rozłączonych klientów
+                for nick in disconnected_clients:
+                    self.log(f"Usuwam rozłączonego klienta: {nick}", 'warning')
+                    del self.clients[nick]
+
+    def get_server_status(self):
+        """Zwraca status serwera"""
+        if self.stats['start_time']:
+            uptime = datetime.datetime.now() - self.stats['start_time']
+            uptime_str = str(uptime).split('.')[0]  # Bez mikrosekund
+        else:
+            uptime_str = "Nieznany"
+            
+        with self.clients_lock:
+            current_users = len(self.clients)
+        
+        return {
+            'uptime': uptime_str,
+            'users': current_users,
+            'messages': self.stats['total_messages'],
+            'peak_users': self.stats['peak_users']
+        }
+
+    def change_user_nick(self, old_nick, new_nick):
+        """Zmienia nick użytkownika"""
+        with self.clients_lock:
+            if old_nick in self.clients and new_nick not in self.clients:
+                client_handler = self.clients[old_nick]
+                del self.clients[old_nick]
+                self.clients[new_nick] = client_handler
+                
+                # Wyślij aktualną listę użytkowników do wszystkich
+                self.broadcast_user_list()
+                return True
+        return False
+
+    def send_private_message(self, sender_nick, target_nick, message):
+        """Wysyła prywatną wiadomość"""
+        with self.clients_lock:
+            if target_nick in self.clients:
+                target_handler = self.clients[target_nick]
+                
+                # Wiadomość dla odbiorcy
+                target_msg = Protocol.create_system_message(f"📥 [Prywatnie od {sender_nick}]: {message}")
+                
+                # Wyślij wiadomość
+                if target_handler.send_message(target_msg):
+                    # Dodaj do historii
+                    self.history.add_message(f"PRIV_{sender_nick}", f"Do {target_nick}: {message}", "private")
+                    return True
+        return False
 
 def main():
     # Pobierz parametry z linii komend
